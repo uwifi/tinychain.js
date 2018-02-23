@@ -1,0 +1,29 @@
+{
+  "name": "tinychain.js",
+  "version": "0.0.1",
+  "description": "An migration from python to js for tinychain.",
+  "main": "tinychain.js",
+  "directories": {
+    "test": "test"
+  },
+  "dependencies": {
+    "webworker-threads": "0.7.13"
+  },
+  "devDependencies": {
+    "chai": "4.1.2",
+    "mocha": "5.0.1"
+  },
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Changdao/tinychain.js.git"
+  },
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/Changdao/tinychain.js/issues"
+  },
+  "homepage": "https://github.com/Changdao/tinychain.js#readme"
+}
