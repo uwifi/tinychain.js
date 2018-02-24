@@ -19,6 +19,10 @@ describe('tinychain.js',function(){
 		});
 		it('should do right public key to address', function(){
 			expect(tinychain.pubkey_to_address(stringToUInt8Array('abc'))).to.equal('J4LoFeFctabK8tMJcPiAjg8sEbvJhyGzg');
-		})
+		});
+
+		it('should create right public/private key',function(){
+			expect(tinychain.loadKey('')).to.equal('');
+		});
 	});
 });

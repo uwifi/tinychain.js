@@ -67,6 +67,34 @@ var bs58 = require('base-x')(BASE58)
 // Misc. utilities
 // ----------------------------------------------------------------------------
 
+const { randomBytes } = require('crypto')
+const secp256k1 = require('secp256k1')
+// or require('secp256k1/elliptic')
+//   if you want to use pure js implementation in node
+
+// generate privKey
+let generateKey = function(){
+	let privKey
+	do {
+	  privKey = randomBytes(32)
+	} while (!secp256k1.privateKeyVerify(privKey))
+
+	// get the public key in a compressed format
+	var pubKey = secp256k1.publicKeyCreate(privKey)	
+
+	return {privateKey:privKey,publicKey:pubKey};
+}
+
+let loadKey = function(str){
+	var privateKey = Buffer.from(str);
+	var pubKey = secp256k1.publicKeyCreate(privKey)	
+
+	return {privateKey:privKey,publicKey:pubKey};	
+}
+
+
+
+
 let b58encode_check = function(buff){
 	var sha = crypto.createHash('sha256');
 	sha.update(buff);
@@ -874,8 +902,9 @@ let init_wallet = function(){
 	    		fs.readFile(path,function(err,data){
 	    			if(!err)
 	    			{
-	    				signing_key = ecdsa.SigningKey.from_string(data, curve=ecdsa.SECP256k1);	
-	    				resolve(signing_key);
+	    				//signing_key = ecdsa.SigningKey.from_string(data, curve=ecdsa.SECP256k1);	
+	    				key = loadKey(data);
+	    				resolve(key);
 	    			}
 	    			else
 	    				reject(err);
@@ -885,8 +914,9 @@ let init_wallet = function(){
 	    	}
 	    	else{
 	    		logger.info(`"generating new wallet: $'{path}'`);
-	        	signing_key = ecdsa.SigningKey.generate(curve=ecdsa.SECP256k1)
-	        	fs.writeFile(path, signing_key.to_string(),function(err){
+	        	//signing_key = ecdsa.SigningKey.generate(curve=ecdsa.SECP256k1)
+	        	signing_key = generateKey();
+	        	fs.writeFile(path, signing_key.privateKey.toString(),function(err){
 	        		if(!err)resolve(signing_key);
 	        		else reject(err);
 	        	});
@@ -894,12 +924,12 @@ let init_wallet = function(){
     	})
 	});
     
-	return readOrWriteKey.then(function(signing_key){
-		verifying_key = signing_key.get_verifying_key();
+	return readOrWriteKey.then(function(key){
+		verifying_key = key.publicKey;
 		my_address = pubkey_to_address(verifying_key.to_string());
 		logger.info(`your address is ${my_address}`);
 
-		return ([signing_key, verifying_key, my_address]);
+		return ([key.privateKey, verifying_key, my_address]);
 	})
 
 };
