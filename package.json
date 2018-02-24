@@ -7,6 +7,8 @@
     "test": "test"
   },
   "dependencies": {
+    "bluebird": "3.5.1",
+    "ripemd160": "2.0.1",
     "webworker-threads": "0.7.13"
   },
   "devDependencies": {

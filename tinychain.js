@@ -59,6 +59,8 @@ TODO:
 
 let crypto = require('crypto');
 let fs = require('fs');
+let RIPEMD160 = require('ripemd160');
+let Promise = require('bluebird');
 
 // Misc. utilities
 // ----------------------------------------------------------------------------
@@ -139,8 +141,13 @@ let deserialize = function(str) {
 }
 
 let _chunks = function(l, n){
-	//todo: to migrate;
+	//implemented migration
 	//return (l[i:i + n] for i in range(0, len(l), n))
+	var result =[];
+	for(var i =0;i<l.length;l+=n)
+	{
+		result.push(l.slice(i,i+n));
+	}
 }
 
 
@@ -362,9 +369,9 @@ let connect_block = function(block, doing_reorg) {
     		mempool.pop(tx.id, null);
     		if(! tx.is_coinbase)
     			tx.txins.forEach(function(){
-    				//todo: to extend the star
-    				//todo: to migrate;
-    				//rm_from_utxo(*txin.to_spend);
+    				//implemented: to extend the star
+    				//implemented: to migrate;
+    				rm_from_utxo(txin.to_spend.txid,txin.to_spend.txout_idx);
     			})
     		tx.txouts.forEach(function(tx,idx){
     			add_to_utxo(txout,tx,i,tx_is_coinbase,chain.length);
@@ -395,8 +402,9 @@ let disconnect_block = function(block, chain = null){
 		mempool[tx.id] = tx;
 
 		tx.txins.forEach(function(txin){
-			//todo: to migrate
-			//if(txin.to_spend)add_to_utxo(*find_txout_for_txin(txin,chain));
+			//implemented: to migrate
+			var r =find_txout_for_txin(txin,chain);
+			if(txin.to_spend)add_to_utxo(r[0],r[1],r[2],r[3],r[4]);
 		});
 
 		range(tx.txouts.length).forEach(function(i){
@@ -823,12 +831,58 @@ WALLET_PATH = process.env['TC_WALLET_PATH']||'wallet.dat';
 
 let pubkey_to_address = function(pubkey)
 {
-	//todo: to migrate;
+	//implemented?: to migrate;
+	var sha256_1 = crypto.createHash('sha256');
+    sha256_1.update(pubkey);
+    sha=sha256_1.digest();
+    ripe = new RIPEMD160().update(sha).digest('hex')
+    //return b58encode_check(b'\x00' + ripe)
+    //byte replace with unicoe??
+    return b58encode_check(String.fromCharCode(0) + ripe);
+
 }
 
-let init_wallet = function(path){
+let init_wallet = function(){
 	//todo: to migrate;
-}
+	path = path || WALLET_PATH
+	//to beautify the file create process with promise
+	let readOrWriteKey = new Promise(function(resolve, reject){
+		fs.exists(path,function(exists){
+	    	if(exists)
+	    	{
+	    		fs.readFile(path,function(err,data){
+	    			if(!err)
+	    			{
+	    				signing_key = ecdsa.SigningKey.from_string(data, curve=ecdsa.SECP256k1);	
+	    				resolve(signing_key);
+	    			}
+	    			else
+	    				reject(err);
+	    			
+	    		}); 
+	            	
+	    	}
+	    	else{
+	    		logger.info(`"generating new wallet: $'{path}'`);
+	        	signing_key = ecdsa.SigningKey.generate(curve=ecdsa.SECP256k1)
+	        	fs.writeFile(path, signing_key.to_string(),function(err){
+	        		if(!err)resolve(signing_key);
+	        		else reject(err);
+	        	});
+	    	}
+    	})
+	});
+    
+	return readOrWriteKey.then(function(signing_key){
+		verifying_key = signing_key.get_verifying_key();
+		my_address = pubkey_to_address(verifying_key.to_string());
+		logger.info(`your address is ${my_address}`);
+
+		return ([signing_key, verifying_key, my_address]);
+	})
+
+};
+
 
 
 // Main
