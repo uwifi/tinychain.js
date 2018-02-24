@@ -61,9 +61,29 @@ let crypto = require('crypto');
 let fs = require('fs');
 let RIPEMD160 = require('ripemd160');
 let Promise = require('bluebird');
+var BASE58 = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz'
+var bs58 = require('base-x')(BASE58)
 
 // Misc. utilities
 // ----------------------------------------------------------------------------
+
+let b58encode_check = function(buff){
+	var sha = crypto.createHash('sha256');
+	sha.update(buff);
+	var sha2 = crypto.createHash('sha256');
+	sha2.update(sha.digest());
+	return bs58.encode(Buffer.concat([buff,sha2.digest().slice(0,4)]));
+}
+
+let stringToUInt8Array =function(str)
+{
+	var uint=new Uint8Array(str.length);
+	for(var i=0,j=str.length;i<j;++i){
+  		uint[i]=str.charCodeAt(i);
+	}
+	return uint;
+}
+
 
 class BaseException extends Error {
     constructor(message) {
@@ -835,10 +855,11 @@ let pubkey_to_address = function(pubkey)
 	var sha256_1 = crypto.createHash('sha256');
     sha256_1.update(pubkey);
     sha=sha256_1.digest();
-    ripe = new RIPEMD160().update(sha).digest('hex')
+    ripe = new RIPEMD160().update(sha).digest();
     //return b58encode_check(b'\x00' + ripe)
     //byte replace with unicoe??
-    return b58encode_check(String.fromCharCode(0) + ripe);
+    //return bs58.encode(String.fromCharCode(0) + ripe);
+    return b58encode_check(ripe);
 
 }
 
@@ -930,6 +951,7 @@ if(!module.parent)
 else
 {
 	module.exports.sha256d = sha256d;
+	module.exports.pubkey_to_address= pubkey_to_address;
 }
 
 
