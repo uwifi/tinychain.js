@@ -59,9 +59,59 @@ TODO:
 
 let crypto = require('crypto');
 let fs = require('fs');
+let RIPEMD160 = require('ripemd160');
+let Promise = require('bluebird');
+var BASE58 = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz'
+var bs58 = require('base-x')(BASE58)
 
 // Misc. utilities
 // ----------------------------------------------------------------------------
+
+const { randomBytes } = require('crypto')
+const secp256k1 = require('secp256k1')
+// or require('secp256k1/elliptic')
+//   if you want to use pure js implementation in node
+
+// generate privKey
+let generateKey = function(){
+	let privKey
+	do {
+	  privKey = randomBytes(32)
+	} while (!secp256k1.privateKeyVerify(privKey))
+
+	// get the public key in a compressed format
+	var pubKey = secp256k1.publicKeyCreate(privKey)	
+
+	return {privateKey:privKey,publicKey:pubKey};
+}
+
+let loadKey = function(str){
+	var privateKey = Buffer.from(str);
+	var pubKey = secp256k1.publicKeyCreate(privKey)	
+
+	return {privateKey:privKey,publicKey:pubKey};	
+}
+
+
+
+
+let b58encode_check = function(buff){
+	var sha = crypto.createHash('sha256');
+	sha.update(buff);
+	var sha2 = crypto.createHash('sha256');
+	sha2.update(sha.digest());
+	return bs58.encode(Buffer.concat([buff,sha2.digest().slice(0,4)]));
+}
+
+let stringToUInt8Array =function(str)
+{
+	var uint=new Uint8Array(str.length);
+	for(var i=0,j=str.length;i<j;++i){
+  		uint[i]=str.charCodeAt(i);
+	}
+	return uint;
+}
+
 
 class BaseException extends Error {
     constructor(message) {
@@ -111,12 +161,41 @@ let serialize = function(obj) {
 }
 
 let deserialize = function(str) {
-	//todo: to migrate;
+	/*
+	    """NamedTuple-flavored serialization from JSON."""
+    gs = globals()
+
+    def contents_to_objs(o):
+        if isinstance(o, list):
+            return [contents_to_objs(i) for i in o]
+        elif not isinstance(o, Mapping):
+            return o
+
+        _type = gs[o.pop('_type', None)]
+        bytes_keys = {
+            k for k, v in get_type_hints(_type).items() if v == bytes}
+
+        for k, v in o.items():
+            o[k] = contents_to_objs(v)
+
+            if k in bytes_keys:
+                o[k] = binascii.unhexlify(o[k]) if o[k] else o[k]
+
+        return _type(**o)
+
+    return contents_to_objs(json.loads(serialized))
+	*/
+	return JSON.parse(str);
 }
 
 let _chunks = function(l, n){
-	//todo: to migrate;
-	return (l[i:i + n] for i in range(0, len(l), n))
+	//implemented migration
+	//return (l[i:i + n] for i in range(0, len(l), n))
+	var result =[];
+	for(var i =0;i<l.length;l+=n)
+	{
+		result.push(l.slice(i,i+n));
+	}
 }
 
 
@@ -197,14 +276,14 @@ let Transaction = function(txins, txouts, locktime) {
 }
 
 Transaction.prototype.is_coinbase = function() {
-    return this.txins.legnth = 1 && this.txins[0].to_spend == nil;
+    return this.txins.legnth = 1 && this.txins[0].to_spend == null;
 }
 Transaction.prototype.create_coinbase = function(cls, pay_to_addr, value, height) {
     return cls(
         [{
-            to_spend: nil,
+            to_spend: null,
             unlock_sig: str(height).encode(),
-            unlock_pk: nil,
+            unlock_pk: null,
             sequence: 0
         }], [{
             value: value,
@@ -220,7 +299,7 @@ Transaction.prototype.id = function(self) {
 let Block = function(version, prev_block_hash, merkle_hash, timestamp, bits, nonce, txns) {
     this.version = version;
     this.prev_block_hash = prev_block_hash;
-    this.merkle_hash = kerkle_hash;
+    this.merkle_hash = merkle_hash;
     this.timestamp = timestamp;
     this.bits = bits;
     this.nonce = nonce;
@@ -239,8 +318,8 @@ Block.prototype.header = function() {
 
 
 let genesis_block = new Block(
-    0, nil, '7118894203235a955a908c0abfc6d8fe6edec47b0a04ce1bf7263da3b4366d22',
-    1501821412, 24, 10126761, [new Transaction([new TxIn(nil, '0', nil, 0)], [new TxOut(5000000000, '143UVyz7ooiAv1pMqbwPPpnH4BV9ifJGFF')], nil)]
+    0, null, '7118894203235a955a908c0abfc6d8fe6edec47b0a04ce1bf7263da3b4366d22',
+    1501821412, 24, 10126761, [new Transaction([new TxIn(null, '0', null, 0)], [new TxOut(5000000000, '143UVyz7ooiAv1pMqbwPPpnH4BV9ifJGFF')], null)]
 );
 
 var active_chain = [genesis_block];
@@ -276,14 +355,14 @@ let txn_iterator = function(chain) {
 //didn't try to use the same paradigm, into a array then iterate
 let locate_block = function(block_hash, chain) {
     //chains = chain?[chain]:[active_chain,side_branches];
-    var result = [nil, nil, nil];
+    var result = [null, null, null];
     if (chain) {
         chain.each(function(block, idx) {
             if (block.id == block_hash) result = [block, idx, 0]
         });
         return result;
     } else {
-        result = nil;
+        result = null;
         active_chain.each(function(block, idx) {
             if (block.id == block_hash) result = [block, idx, 0];
         });
@@ -291,16 +370,16 @@ let locate_block = function(block_hash, chain) {
         side_branches.each(function(block, idx) {
             if (block.id == block_hash) result = [block, idx, 0];
         });
-        return result || [nil, nil, nil];
+        return result || [null, null, null];
     }
 
 }
 
 let connect_block = function(block, doing_reorg) {
-    search_chain = doing_reorg ? active_chain : nil;
+    search_chain = doing_reorg ? active_chain : null;
     if (locate_block(block.id, search_chain)[0]) {
         logger.debug(`ignore block already seen:${block.id}`);
-        return nil;
+        return null;
     }
 
     try
@@ -335,11 +414,12 @@ let connect_block = function(block, doing_reorg) {
     if(chain_idx == ACTIVE_CHAIN_IDX)
     {
     	block.txns.forEach(function(tx){
-    		mempool.pop(tx.id, nil);
+    		mempool.pop(tx.id, null);
     		if(! tx.is_coinbase)
     			tx.txins.forEach(function(){
-    				//todo: to extend the star
-    				rm_from_utxo(*txin.to_spend);
+    				//implemented: to extend the star
+    				//implemented: to migrate;
+    				rm_from_utxo(txin.to_spend.txid,txin.to_spend.txout_idx);
     			})
     		tx.txouts.forEach(function(tx,idx){
     			add_to_utxo(txout,tx,i,tx_is_coinbase,chain.length);
@@ -362,7 +442,7 @@ let connect_block = function(block, doing_reorg) {
     return chain_idx;
 }
 
-let disconnect_block = function(block, chain = nil){
+let disconnect_block = function(block, chain = null){
 	chain = chain || active_chain;
 	if(block != chain[-1])throw Error('Block being disconnected must be tip.');
 
@@ -370,7 +450,9 @@ let disconnect_block = function(block, chain = nil){
 		mempool[tx.id] = tx;
 
 		tx.txins.forEach(function(txin){
-			if(txin.to_spend)add_to_utxo(*find_txout_for_txin(txin,chain));
+			//implemented: to migrate
+			var r =find_txout_for_txin(txin,chain);
+			if(txin.to_spend)add_to_utxo(r[0],r[1],r[2],r[3],r[4]);
 		});
 
 		range(tx.txouts.length).forEach(function(i){
@@ -382,15 +464,16 @@ let disconnect_block = function(block, chain = nil){
 	return chain.pop();
 }
 
-let find_txout_for_txin(txin, chain){
+let find_txout_for_txin=function(txin, chain){
 	txid = txin.to_spend[0];
 	txout_idx = tx.to_spend[1];
-	try
-	{
-		var txout = txns.find(function(t){
-			return t.id==txid;
-		});
-	}
+	
+	var txout = chain.find(function(t){
+		return t.id==txid;
+	});
+
+	txout = txout.txouts[txout_idx];
+	return [txout,tx,txout_idx,tx.is_coinbase,height];
 }
 
 let reorg_if_necessary = function(){
@@ -417,16 +500,18 @@ let reorg_if_necessary = function(){
 
 
 
-let try_reorg(branch, branch_idx,fork_idx){
+let try_reorg=function(branch, branch_idx,fork_idx){
 	fork_block = active_chain[fork_idx];
-	let disconnect_to_fork=function(){
+	let disconnect_to_fork=function*(){
 		while(active_chain[-1].id!=fork_block.id)
 		{
-			yield disconnect_block(active_chain[-1]);
+			var a =disconnect_block(active_chain[-1]);
+			yield;
 		}
 	}
 	//todo change to python syntax
-	old_active = list(disconnect_to_fork())[::=1];
+	//old_active = list(disconnect_to_fork())[::-1];
+	old_active = disconnect_to_fork().reverse();
 
 	if(branch[0].prev_block_hash!=active_chain[-1].id)throw Error('Asset Error');
 
@@ -459,13 +544,13 @@ let try_reorg(branch, branch_idx,fork_idx){
 }
 
 
-let get_median_time_past(num_last_blocks){
-	last_n_blocks = actife_chain[::-1][::num_last_blocks];
+let get_median_time_past=function(num_last_blocks){
+	last_n_blocks = actife_chain.reverse().slice(0,num_last_blocks);
 	if(! last_n_blocks)return 0;
 	return last_n_blocks[Math.floor(last_n_blocks.length/2)].timestamp;
 }
 
-CHAIN-PATH = process.env['TC_CHAIN_PATH']||'chain.data';
+CHAIN_PATH = process.env['TC_CHAIN_PATH']||'chain.data';
 
 let save_to_disk=function(){
 	fs.open(CHAIN_PATH,'wb').then(function(file){
@@ -485,6 +570,10 @@ let load_from_disk=function(){
 	{
 		fs.open(CHAIN_PATH,'rb').then(function(file){
 			//todo: to migrate this.
+			file.read(4).then(function(buff){
+				buff = buff|| 0x00;
+
+			})
 		})
 	}
 	catch(e)
@@ -517,7 +606,7 @@ let find_utxo_in_list=function(txin,txns){
 	}
 	catch(e)
 	{
-		return nil;
+		return null;
 	}
 	return new UnspentTxOut(txout.value,txout.address,tx.id,idx,is_coinbase,height);
 };
@@ -534,7 +623,7 @@ let get_next_work_required = function(prev_block_hash){
 
 }
 
-let assemble_and_solve_block = function(pay_coinbase_to_addr,txns=nil)
+let assemble_and_solve_block = function(pay_coinbase_to_addr,txns=null)
 {
 	//todo: to migrate
 }
@@ -551,7 +640,7 @@ let get_block_subsidy = function(){
 // Signal to communicate to the mining thread that it should stop mining because
 // we've updated the chain with a new block.
 // todo: to migrate
-mine_interrupt = threading.Event()
+mine_interrupt = null; // threading.Event()
 
 let mine = function(){
 	//todo: to migrate
@@ -631,21 +720,34 @@ let validate_block = function(block) {
 
     	// Prev.block found in active chain, but isn 't tip => new fork.
     	else (prev_block != active_chain[-1])
-        	return [block, prev_block_chain_idx + 1# Non - existent]
+        	return [block, prev_block_chain_idx + 1] // Non - existent
     }
         	
     if (get_next_work_required(block.prev_block_hash) != block.bits)
         throw BlockValidationError('bits is incorrect')
 
-    for txn in block.txns[1: ]:
-        try:
-        	validate_txn(txn, siblings_in_block = block.txns[1: ],
-            	allow_utxo_from_mempool = False)
-    	except TxnValidationError:
-        	msg = f "{txn} failed to validate"
+    block.txns.slice(1).forEach(function(txn){
+    	try
+    	{
+
+        	validate_txn(txn, siblings_in_block = block.txns.slice(1),
+            	allow_utxo_from_mempool = False);
+    	}
+    	catch(e)
+    	{
+    		if(e instanceof TxnValidationError)
+    		{
+    			msg = `${txn} failed to validate`;
     
-    		logger.exception(msg)
-    		throw BlockValidationError(msg)
+    			logger.exception(msg);
+    			throw new BlockValidationError(msg);
+    		}
+        	
+    	}
+    	
+    })
+    	
+        
 
     return [block, prev_block_chain_idx];
 }
@@ -670,7 +772,7 @@ let find_utxo_in_mempool = function(txin){
 	catch(e)
 	{
 		logger.debug("Couldn't find utxo in mempool for "+txin);
-		return nil;
+		return null;
 	}
 	return new UnspentTxOut(txout.value,txout.address,txid,false,-1,idx);
 };
@@ -690,8 +792,8 @@ let add_txn_to_mempool=function(txn)
 
 let MerkleNode = function()
 {
-	this.val = nil;
-	this.children = nil;
+	this.val = null;
+	this.children = null;
 	return this;
 }
 
@@ -711,10 +813,10 @@ let get_merkle_root = function(leaves)
 // Peer-to-peer
 // ----------------------------------------------------------------------------
 
-peer_hostnames = (process.env['TC_PEERS']||'')..split(',').filter(function(e){return e!=''});
+peer_hostnames = (process.env['TC_PEERS']||'').split(',').filter(function(e){return e!=''});
 
 // Signal when the initial block download has completed.
-ibd_done = threading.Event()
+ibd_done = null; //threading.Event()
 
 let GetBlockMsg = function(){
 	//todo: to migrate
@@ -751,7 +853,7 @@ let send_to_peer = function(){
 
 let int_to_8bytes = function(a){
 	//todo: to migrate
-	return binascii.unhexlify(f"{a:0{8}x}")
+	return binascii.unhexlify((a||0).toString(16));
 }
 
 let encode_socket_data = function(data)
@@ -760,12 +862,13 @@ let encode_socket_data = function(data)
 	return int_to_8bytes(to_send.length)+to_send;
 }
 
-let ThreadedTCPServer = function(socketserver.ThreadingMixIn,socketserver.TCPServer){
+//todo: to change __ to . to implement
+let ThreadedTCPServer = function(socketserver__ThreadingMixIn,socketserver__TCPServer){
 	//todo: to migrate;
 	pass
 }
 
-let TCPHandler = function(socketserver.BaseRequestHandler){
+let TCPHandler = function(socketserver__BaseRequestHandler){
 	//todo: to migrate;
 }
 
@@ -776,19 +879,97 @@ WALLET_PATH = process.env['TC_WALLET_PATH']||'wallet.dat';
 
 let pubkey_to_address = function(pubkey)
 {
-	//todo: to migrate;
+	//implemented?: to migrate;
+	var sha256_1 = crypto.createHash('sha256');
+    sha256_1.update(pubkey);
+    sha=sha256_1.digest();
+    ripe = new RIPEMD160().update(sha).digest();
+    //return b58encode_check(b'\x00' + ripe)
+    //byte replace with unicoe??
+    //return bs58.encode(String.fromCharCode(0) + ripe);
+    return b58encode_check(ripe);
+
 }
 
-let init_wallet = function(path){
+let init_wallet = function(){
 	//todo: to migrate;
-}
+	path = path || WALLET_PATH
+	//to beautify the file create process with promise
+	let readOrWriteKey = new Promise(function(resolve, reject){
+		fs.exists(path,function(exists){
+	    	if(exists)
+	    	{
+	    		fs.readFile(path,function(err,data){
+	    			if(!err)
+	    			{
+	    				//signing_key = ecdsa.SigningKey.from_string(data, curve=ecdsa.SECP256k1);	
+	    				key = loadKey(data);
+	    				resolve(key);
+	    			}
+	    			else
+	    				reject(err);
+	    			
+	    		}); 
+	            	
+	    	}
+	    	else{
+	    		logger.info(`"generating new wallet: $'{path}'`);
+	        	//signing_key = ecdsa.SigningKey.generate(curve=ecdsa.SECP256k1)
+	        	signing_key = generateKey();
+	        	fs.writeFile(path, signing_key.privateKey.toString(),function(err){
+	        		if(!err)resolve(signing_key);
+	        		else reject(err);
+	        	});
+	    	}
+    	})
+	});
+    
+	return readOrWriteKey.then(function(key){
+		verifying_key = key.publicKey;
+		my_address = pubkey_to_address(verifying_key.to_string());
+		logger.info(`your address is ${my_address}`);
+
+		return ([key.privateKey, verifying_key, my_address]);
+	})
+
+};
+
 
 
 // Main
 // ----------------------------------------------------------------------------
 
 let main = function(){
+	workers = [];
+
+	let start_worker=function(fnc){
+		workers.append(threading.Thread(target=fnc, daemon=True));
+	    workers[-1].start();
+	}
+	        
 	//todo: to migrate;
+	load_from_disk().then(function(){
+		
+	    server = ThreadedTCPServer(('0.0.0.0', PORT), TCPHandler)
+
+	    
+
+	    logger.info(`'[p2p] listening on ${PORT}`)
+	    start_worker(server.serve_forever)
+
+	    if(peer_hostnames)
+	    {
+	    	logger.info(
+	            `'start initial block download from ${len(peer_hostnames)} peers`)
+	        send_to_peer(GetBlocksMsg(active_chain[-1].id))
+	        ibd_done.wait(60.)  // Wait a maximum of 60 seconds for IBD to complete.
+	    }
+	        
+
+	    start_worker(mine_forever)
+	    //todo: to migrate 
+	    //[w.join() for w in workers]
+	});
 }
 
 if(!module.parent)
@@ -797,8 +978,11 @@ if(!module.parent)
 	signing_key = r[0], verifying_key= r[1], my_address= r[2];
 	main();
 }
-
-
+else
+{
+	module.exports.sha256d = sha256d;
+	module.exports.pubkey_to_address= pubkey_to_address;
+}
 
 
 
