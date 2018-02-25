@@ -1,0 +1,22 @@
+{
+  "name": "tinychain.js",
+  "version": "1.0.0",
+  "description": "tinychain base node",
+  "main": "tinychain.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Changdao/tinychain.js.git"
+  },
+  "keywords": [
+    "tinychain"
+  ],
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/Changdao/tinychain.js/issues"
+  },
+  "homepage": "https://github.com/Changdao/tinychain.js#readme"
+}
