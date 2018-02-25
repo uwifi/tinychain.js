@@ -143,6 +143,13 @@ class BlockValidationError extends BaseException {
     }
 }
 
+class ValueError extends Error {
+    constructor(message) {
+        super(message);
+        this.name = 'ValueError';
+    }
+}
+
 let sha256d = function(s) {
     //"""A double SHA-256 hash."""
     if (!(s instanceof Buffer))
@@ -296,7 +303,7 @@ Transaction.prototype.id = function(self) {
     return sha256d(serialize(self));
 }
 
-let Block = function(version, prev_block_hash, merkle_hash, timestamp, bits, nonce, txns) {
+let Block = function (version, prev_block_hash, merkle_hash, timestamp, bits, nonce, txns) {
     this.version = version;
     this.prev_block_hash = prev_block_hash;
     this.merkle_hash = merkle_hash;
@@ -623,9 +630,44 @@ let get_next_work_required = function(prev_block_hash){
 
 }
 
-let assemble_and_solve_block = function(pay_coinbase_to_addr,txns=null)
-{
-	//todo: to migrate
+let assemble_and_solve_block = function (pay_coinbase_to_addr, txns = null) {
+    // Construct a Block by pulling transactions from the mempool, then mine it.
+
+    // TODO: Reentrant lock
+    //
+    // with chain_lock:
+    //     prev_block_hash = active_chain[-1].id if active_chain else None
+
+    let len = active_chain.length;
+    let prev_block_hash = len > 0 ? active_chain[len - 1].id : null;
+
+    let block = new Block(
+        /* version= */          0,
+        /* prev_block_hash= */  prev_block_hash,
+        /* merkle_hash= */      '',
+        /* timestamp= */        Math.floor((Date.now ? Date.now : +(new Date())) / 1000),
+        /* bits= */             get_next_work_required(prev_block_hash),
+        /* nonce= */            0,
+        /* txns= */             txns || []
+    );
+
+    if (!block.txns.length) {
+        block = select_from_mempool(block);
+    }
+
+    let fees = calculate_fees(block);
+    let my_address = init_wallet()[2];
+    let coinbase_txn = Transaction.create_coinbase(
+        my_address, (get_block_subsidy() + fees), active_chain.length);
+
+    block.txns = [ coinbase_txn ].concat(block.txns);
+    block.merkle_hash = get_merkle_root_of_txns(block.txns).val;
+
+    if (serialize(block).length > Params.MAX_BLOCK_SERIALIZED_SIZE) {
+        throw new ValueError('txns specified create a block too large');
+    }
+
+    return mine(block);
 }
 
 let calculate_fees = function (block) {
@@ -679,11 +721,11 @@ let get_block_subsidy = function () {
 // todo: to migrate
 mine_interrupt = null; // threading.Event()
 
-let mine = function(){
+let mine = function () {
 	//todo: to migrate
 }
 
-let mine_forever = function(){
+let mine_forever = function () {
 	//todo: to migrate
 }
 
