@@ -80,19 +80,17 @@ let generateKey = function(){
 	} while (!secp256k1.privateKeyVerify(privKey))
 
 	// get the public key in a compressed format
-	var pubKey = secp256k1.publicKeyCreate(privKey)	
+	var pubKey = secp256k1.publicKeyCreate(privKey).slice(1);	
 
 	return {privateKey:privKey,publicKey:pubKey};
 }
 
 let loadKey = function(str){
-	var privateKey = Buffer.from(str);
-	var pubKey = secp256k1.publicKeyCreate(privKey)	
+	var privKey = Buffer.from(str,'hex');
+	var pubKey = secp256k1.publicKeyCreate(privKey,false).slice(1);	
 
 	return {privateKey:privKey,publicKey:pubKey};	
 }
-
-
 
 
 let b58encode_check = function(buff){
@@ -103,6 +101,8 @@ let b58encode_check = function(buff){
 	return bs58.encode(Buffer.concat([buff,sha2.digest().slice(0,4)]));
 }
 
+/*
+Buffer.from(string);
 let stringToUInt8Array =function(str)
 {
 	var uint=new Uint8Array(str.length);
@@ -110,7 +110,7 @@ let stringToUInt8Array =function(str)
   		uint[i]=str.charCodeAt(i);
 	}
 	return uint;
-}
+}*/
 
 
 class BaseException extends Error {
@@ -982,6 +982,7 @@ else
 {
 	module.exports.sha256d = sha256d;
 	module.exports.pubkey_to_address= pubkey_to_address;
+	module.exports.loadKey = loadKey;
 }
 
 
