@@ -882,35 +882,122 @@ let validate_block = function(block) {
 // ------------------------------------------------------------------
 
 // Set of yet-unmined transactions.
-mempool = {};
+let mempool = {};
 
 // Set of orphaned (i.e. has inputs referencing yet non-existent UTXOs)
 // transactions.
-orphan_txns = [];
+let orphan_txns = [];
 
-let find_utxo_in_mempool = function(txin){
-	var r = txin.to_spend;
-	txid = r[0], idx = r[1];
-	try
-	{
+function find_utxo_in_mempool(txin) {
+    let [ txid, idx ] = txin.to_spend;
+    let txout;
+
+	try {
 		txout = mempool[txid].txouts[idx];
 	}
-	catch(e)
-	{
-		logger.debug("Couldn't find utxo in mempool for "+txin);
+    catch(e) {
+		logger.debug("Couldn't find utxo in mempool for " + txin);
 		return null;
 	}
-	return new UnspentTxOut(txout.value,txout.address,txid,false,-1,idx);
-};
 
-let select_from_mempool = function(block)
-{
-	//todo: to migrate
+	return new UnspentTxOut(txout.value, txout.address, txid, false, -1, idx);
 }
 
-let add_txn_to_mempool=function(txn)
-{
-	//todo: to migrate
+function select_from_mempool(block){
+    // Fill a Block with transactions from the mempool.
+    let added_to_block = new Set();
+
+    function len(str) {
+        return str.length;
+    }
+
+    function check_block_size(block) {
+        return len(serialize(block)) < Params.MAX_BLOCK_SERIALIZED_SIZE;
+    }
+
+    function try_add_to_block(block, txid) {
+        if (added_to_block.has(txid)) {
+            return block;
+        }
+
+        let tx = mempool[txid];
+
+        // For any txin that can't be found in the main chain, find its
+        // transaction in the mempool (if it exists) and add it to the block.
+        for (const key in tx.txins) {
+
+            let txin = tx.txins[key];
+            if (utxo_set[txin.to_spend]) {
+                continue;
+            }
+
+            let in_mempool = find_utxo_in_mempool(txin);
+
+            if (!in_mempool) {
+                logger.debug(`Couldn't find UTXO for ${txin}`);
+                return null;
+            }
+
+            block = try_add_to_block(block, in_mempool.txid);
+            if (!block) {
+                logger.debug("Couldn't add parent")
+                return null;
+            }
+        }
+
+        let newblock = Object.assign({}, block, {
+            txns: block.txns.concat([tx])
+        });
+
+        if (check_block_size(newblock)) {
+            logger.debug(`added tx ${tx.id} to block`);
+            added_to_block.add(txid);
+            return newblock;
+        }
+
+        return block;
+    }
+
+    for (const txid in mempool) {
+        let newblock = try_add_to_block(block, txid);
+
+        if (check_block_size(newblock)) {
+            block = newblock;
+        }
+        else {
+            break;
+        }
+    }
+
+    return block;
+}
+
+function add_txn_to_mempool(txn) {
+    if (mempool[txn.id]) {
+        logger.info(`txn ${txn.id} already seen`);
+        return;
+    }
+
+    try {
+        txn = validate_txn(txn);
+    }
+    catch (e) {
+        if (e.to_orphan) {
+            logger.info(`txn ${e.to_orphan.id} submitted as orphan`);
+            orphan_txns.push(e.to_orphan);
+            return;
+        }
+
+        logger.exception('txn rejected');
+        return;
+    }
+
+    logger.info(`txn ${txn.id} added to mempool`);
+    mempool[txn.id] = txn;
+
+    peer_hostnames.forEach((_, peer) => {
+        send_to_peer(txn, peer);
+    });
 }
 
 // Merkle trees
