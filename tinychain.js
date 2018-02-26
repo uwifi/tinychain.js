@@ -1,6 +1,6 @@
-#!/usr/bin/env python3
+#!/usr/bin/env node
 /***
-tinychain 
+tinychain
 
 
 ⛼  tinychain
@@ -61,8 +61,12 @@ let crypto = require('crypto');
 let fs = require('fs');
 let RIPEMD160 = require('ripemd160');
 let Promise = require('bluebird');
-var BASE58 = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz'
-var bs58 = require('base-x')(BASE58)
+const net = require('net');
+
+var BASE58 = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz';
+var bs58 = require('base-x')(BASE58);
+
+
 
 // Misc. utilities
 // ----------------------------------------------------------------------------
@@ -80,16 +84,20 @@ let generateKey = function(){
 	} while (!secp256k1.privateKeyVerify(privKey))
 
 	// get the public key in a compressed format
+
 	var pubKey = secp256k1.publicKeyCreate(privKey).slice(1);	
+
 
 	return {privateKey:privKey,publicKey:pubKey};
 }
 
 let loadKey = function(str){
+
 	var privKey = Buffer.from(str,'hex');
 	var pubKey = secp256k1.publicKeyCreate(privKey,false).slice(1);	
 
-	return {privateKey:privKey,publicKey:pubKey};	
+
+	return {privateKey:privKey,publicKey:pubKey};
 }
 
 
@@ -140,6 +148,13 @@ class BlockValidationError extends BaseException {
         super(message);
         this.name = 'BlockValidationError';
         this.to_orphan = to_orphan;
+    }
+}
+
+class ValueError extends Error {
+    constructor(message) {
+        super(message);
+        this.name = 'ValueError';
     }
 }
 
@@ -296,7 +311,7 @@ Transaction.prototype.id = function(self) {
     return sha256d(serialize(self));
 }
 
-let Block = function(version, prev_block_hash, merkle_hash, timestamp, bits, nonce, txns) {
+let Block = function (version, prev_block_hash, merkle_hash, timestamp, bits, nonce, txns) {
     this.version = version;
     this.prev_block_hash = prev_block_hash;
     this.merkle_hash = merkle_hash;
@@ -391,7 +406,7 @@ let connect_block = function(block, doing_reorg) {
     {
     	if(e instanceof BlockValidationError)
     	{
-    		logger.exception('block '+block.id+' failed validation!');	
+    		logger.exception('block '+block.id+' failed validation!');
     		if(e.to_orphan)
     		{
     			logger.info('saw orphan block' + block.id);
@@ -467,7 +482,7 @@ let disconnect_block = function(block, chain = null){
 let find_txout_for_txin=function(txin, chain){
 	txid = txin.to_spend[0];
 	txout_idx = tx.to_spend[1];
-	
+
 	var txout = chain.find(function(t){
 		return t.id==txid;
 	});
@@ -517,7 +532,7 @@ let try_reorg=function(branch, branch_idx,fork_idx){
 
 	let rollback_reorg=function()
 	{
-		logger.info(`reorg of idx ${branch_idx} to active_chain failed`);		
+		logger.info(`reorg of idx ${branch_idx} to active_chain failed`);
 		list(disconnect_to_fork());
 		old_active.forEach(function(block){
 			if(connect_block(block, true)!=ACTIVE_CHAIN_IDX)throw Error('Assert Error');
@@ -619,22 +634,94 @@ let get_next_work_required = function(prev_block_hash){
 		return Params.INITIAL_DIFFICULTY_BITS;
 
 	var r = locate_block(prev_block_hash)
-	
+
 
 }
 
-let assemble_and_solve_block = function(pay_coinbase_to_addr,txns=null)
-{
-	//todo: to migrate
+let assemble_and_solve_block = function (pay_coinbase_to_addr, txns = null) {
+    // Construct a Block by pulling transactions from the mempool, then mine it.
+
+    // TODO: Reentrant lock
+    //
+    // with chain_lock:
+    //     prev_block_hash = active_chain[-1].id if active_chain else None
+
+    let len = active_chain.length;
+    let prev_block_hash = len > 0 ? active_chain[len - 1].id : null;
+
+    let block = new Block(
+        /* version= */          0,
+        /* prev_block_hash= */  prev_block_hash,
+        /* merkle_hash= */      '',
+        /* timestamp= */        Math.floor((Date.now ? Date.now : +(new Date())) / 1000),
+        /* bits= */             get_next_work_required(prev_block_hash),
+        /* nonce= */            0,
+        /* txns= */             txns || []
+    );
+
+    if (!block.txns.length) {
+        block = select_from_mempool(block);
+    }
+
+    let fees = calculate_fees(block);
+    let my_address = init_wallet()[2];
+    let coinbase_txn = Transaction.create_coinbase(
+        my_address, (get_block_subsidy() + fees), active_chain.length);
+
+    block.txns = [ coinbase_txn ].concat(block.txns);
+    block.merkle_hash = get_merkle_root_of_txns(block.txns).val;
+
+    if (serialize(block).length > Params.MAX_BLOCK_SERIALIZED_SIZE) {
+        throw new ValueError('txns specified create a block too large');
+    }
+
+    return mine(block);
 }
 
-let calculate_fees = function(block)
-{
-	//todo: to migrate
+let calculate_fees = function (block) {
+    // Given the txns in a Block, subtract the amount of coin output from the
+    // inputs. This is kept as a reward by the miner.
+    let fee = 0;
+
+    function utxo_from_block(txin) {
+        let tx = block.txns.find(t => {
+            return t.id === txin.to_spend.txid;
+        });
+
+        return tx ? tx.txouts[txin.to_spend.txout_idx] : null;
+    }
+
+    function find_utxo(txin) {
+        return utxo_set.get(txin.to_spend) || utxo_from_block(txin);
+    }
+
+    function reducer(sum, v) {
+        return sum + v;
+    }
+
+    block.txns.forEach((_, txn) => {
+        let spent = txn.txins.map(i => {
+            return find_utxo(i).value;
+        }).reduce(reducer);
+
+        let sent = txn.txouts.map(o => {
+            return o.value;
+        }).redue(reducer);
+
+        fee += spent - sent;
+    });
+
+    return fee;
 }
 
-let get_block_subsidy = function(){
-	//todo: to migrate
+let get_block_subsidy = function () {
+    halvings = Math.floor(active_chain / Params.HALVE_SUBSIDY_AFTER_BLOCKS_NUM);
+
+    if (halvings >= 64) {
+        return 0;
+    }
+
+    return Math.floor(50 * Params.BELUSHIS_PER_COIN / Math.pow(2, halvings));
 }
 
 // Signal to communicate to the mining thread that it should stop mining because
@@ -642,11 +729,11 @@ let get_block_subsidy = function(){
 // todo: to migrate
 mine_interrupt = null; // threading.Event()
 
-let mine = function(){
+let mine = function () {
 	//todo: to migrate
 }
 
-let mine_forever = function(){
+let mine_forever = function () {
 	//todo: to migrate
 }
 
@@ -693,7 +780,7 @@ let validate_block = function(block) {
         	logger.exception(`Transaction ${txn} in ${block} failed to validate`);
         throw BlockValidationError('Invalid txn {txn.id}')
     }
-    
+
 
     if (get_merkle_root_of_txns(block.txns).val != block.merkle_hash)
         throw BlockValidationError('Merkle hash invalid')
@@ -703,7 +790,7 @@ let validate_block = function(block) {
 
     if (! block.prev_block_hash && ! active_chain) //This is the genesis block.
     	prev_block_chain_idx = ACTIVE_CHAIN_IDX;
-    else 
+    else
     {
 
         prev_block, prev_block_height, prev_block_chain_idx = locate_block(
@@ -722,7 +809,7 @@ let validate_block = function(block) {
     	else (prev_block != active_chain[-1])
         	return [block, prev_block_chain_idx + 1] // Non - existent
     }
-        	
+
     if (get_next_work_required(block.prev_block_hash) != block.bits)
         throw BlockValidationError('bits is incorrect')
 
@@ -738,16 +825,16 @@ let validate_block = function(block) {
     		if(e instanceof TxnValidationError)
     		{
     			msg = `${txn} failed to validate`;
-    
+
     			logger.exception(msg);
     			throw new BlockValidationError(msg);
     		}
-        	
+
     	}
-    	
+
     })
-    	
-        
+
+
 
     return [block, prev_block_chain_idx];
 }
@@ -779,7 +866,7 @@ let find_utxo_in_mempool = function(txin){
 
 let select_from_mempool = function(block)
 {
-	//todo: to migrate	
+	//todo: to migrate
 }
 
 let add_txn_to_mempool=function(txn)
@@ -818,7 +905,7 @@ peer_hostnames = (process.env['TC_PEERS']||'').split(',').filter(function(e){ret
 // Signal when the initial block download has completed.
 ibd_done = null; //threading.Event()
 
-let GetBlockMsg = function(){
+let GetBlocskMsg = function(){
 	//todo: to migrate
 }
 
@@ -844,16 +931,58 @@ let AddPeerMsg = function(){
 
 let read_all_from_socket = function(req)
 {
-	//todo: to migrate
+	//finish: to migrate
+	//no need to migrate, node.js has different way.
 }
 
-let send_to_peer = function(){
-	//todo: to migrate
+
+let sendData = function(port,peer,data){
+	return new Promise(function(resolve,reject){
+		const client = net.createConnection({port:port,host:peer},()=>{
+			client.write(data);
+		});
+		
+		client.on('data',(data)=>{
+			console.log('[received]:'+data);
+			client.end();
+		});
+
+		client.on('end',()=>{
+			console.log('disconnected from server');
+			resolve();
+		});
+		client.on('error',(err)=>{
+			reject(err);
+		});
+	});
+} 
+
+let send_to_peer = function(data,peer){
+	//finish: to migrate
+	var randomIdx = peer_hostnames.length*Math.random();
+	if(randomIdx == peer_hostnames.length)randomIdx--;
+	if(randomIdx<0 )randomIdx =0;
+	peer = peer || peer_hostnames[Math.trunc(randomIdx)];
+	data = encode_socket_data(data);
+	var tries_left =3;
+	let innerSend = function(){
+		sendData(PORT,peer,data).catch(function(){
+			tries_left--;
+			if(tries_left>1)
+			{
+				setTimeout(function(){
+					innerSend();
+				},5000);	
+			}
+		})
+	}
+
+	innerSend();
 }
 
 let int_to_8bytes = function(a){
 	//todo: to migrate
-	return binascii.unhexlify((a||0).toString(16));
+	return Buffer.from(('00000000'+a.toString(16)).slice(-8),'hex');
 }
 
 let encode_socket_data = function(data)
@@ -868,8 +997,22 @@ let ThreadedTCPServer = function(socketserver__ThreadingMixIn,socketserver__TCPS
 	pass
 }
 
-let TCPHandler = function(socketserver__BaseRequestHandler){
-	//todo: to migrate;
+/*let TCPHandler = function(socketserver__BaseRequestHandler){
+	//no need: to migrate;
+}*/
+
+let TCPServer = function(){
+	const server = net.createServer((socket) => {
+  		socket.end('goodbye\n');
+	}).on('error', (err) => {
+		// handle errors here
+		throw err;
+	});
+
+	// grab an arbitrary unused port.
+	server.listen(() => {
+		console.log('opened server on', server.address());
+	});
 }
 
 // Wallet
@@ -902,15 +1045,15 @@ let init_wallet = function(){
 	    		fs.readFile(path,function(err,data){
 	    			if(!err)
 	    			{
-	    				//signing_key = ecdsa.SigningKey.from_string(data, curve=ecdsa.SECP256k1);	
+	    				//signing_key = ecdsa.SigningKey.from_string(data, curve=ecdsa.SECP256k1);
 	    				key = loadKey(data);
 	    				resolve(key);
 	    			}
 	    			else
 	    				reject(err);
-	    			
-	    		}); 
-	            	
+
+	    		});
+
 	    	}
 	    	else{
 	    		logger.info(`"generating new wallet: $'{path}'`);
@@ -923,7 +1066,7 @@ let init_wallet = function(){
 	    	}
     	})
 	});
-    
+
 	return readOrWriteKey.then(function(key){
 		verifying_key = key.publicKey;
 		my_address = pubkey_to_address(verifying_key.to_string());
@@ -946,13 +1089,13 @@ let main = function(){
 		workers.append(threading.Thread(target=fnc, daemon=True));
 	    workers[-1].start();
 	}
-	        
+
 	//todo: to migrate;
 	load_from_disk().then(function(){
-		
+
 	    server = ThreadedTCPServer(('0.0.0.0', PORT), TCPHandler)
 
-	    
+
 
 	    logger.info(`'[p2p] listening on ${PORT}`)
 	    start_worker(server.serve_forever)
@@ -964,10 +1107,10 @@ let main = function(){
 	        send_to_peer(GetBlocksMsg(active_chain[-1].id))
 	        ibd_done.wait(60.)  // Wait a maximum of 60 seconds for IBD to complete.
 	    }
-	        
+
 
 	    start_worker(mine_forever)
-	    //todo: to migrate 
+	    //todo: to migrate
 	    //[w.join() for w in workers]
 	});
 }
@@ -983,6 +1126,7 @@ else
 	module.exports.sha256d = sha256d;
 	module.exports.pubkey_to_address= pubkey_to_address;
 	module.exports.loadKey = loadKey;
+	module.exports.int_to_8bytes = int_to_8bytes;
 }
 
 
