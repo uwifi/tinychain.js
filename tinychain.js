@@ -645,7 +645,7 @@ let assemble_and_solve_block = function (pay_coinbase_to_addr, txns = null) {
         /* version= */          0,
         /* prev_block_hash= */  prev_block_hash,
         /* merkle_hash= */      '',
-        /* timestamp= */        Math.floor((Date.now ? Date.now : +(new Date())) / 1000),
+        /* timestamp= */        Math.floor((Date.now ? Date.now() : +(new Date())) / 1000),
         /* bits= */             get_next_work_required(prev_block_hash),
         /* nonce= */            0,
         /* txns= */             txns || []
@@ -718,14 +718,52 @@ let get_block_subsidy = function () {
 
 // Signal to communicate to the mining thread that it should stop mining because
 // we've updated the chain with a new block.
-// todo: to migrate
-mine_interrupt = null; // threading.Event()
 
-let mine = function () {
-	//todo: to migrate
+// TODO: implemented thread interrupt
+// mine_interrupt = threading.Event()
+let mine_interrupt = {
+    is_set: () => {
+        return false;
+    },
+    set: () => {
+        return false;
+    },
+    clear: () => {
+        return false;
+    }
 }
 
-let mine_forever = function () {
+function mine(block) {
+    function now() {
+        return Date.now ? Date.now() : +(new Date());
+    }
+
+    let start = now();
+    let nonce = 0;
+    // Shifts a in binary representation b (< 32) bits to the left
+    let target = (1 << (256 - block.bits));
+
+    mine_interrupt.clear();
+
+    while (parseInt(sha256d(block.header(nonce)), 16) >= target) {
+        nonce += 1;
+
+        if (nonce % 10000 == 0 && mine_interrupt.is_set()) {
+            logger.info('[mining] interrupted');
+            mine_interrupt.clear();
+            return null;
+        }
+    }
+
+    block.nonce = nonce;
+    duration = Math.floor(now() - start) || 0.001;
+    khs = Math.floor(Math.floor(block.nonce / duration) / 1000);
+
+    logger.info(`[mining] block found! ${duration} s - ${khs} KH/s - ${block.id}`);
+    return block;
+}
+
+function mine_forever() {
 	//todo: to migrate
 }
 
