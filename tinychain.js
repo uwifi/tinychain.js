@@ -195,14 +195,13 @@ let deserialize = function(str) {
 	return JSON.parse(str);
 }
 
-let _chunks = function(l, n){
-	//implemented migration
+function _chunks(l, n) {
 	//return (l[i:i + n] for i in range(0, len(l), n))
-	var result =[];
-	for(var i =0;i<l.length;l+=n)
-	{
-		result.push(l.slice(i,i+n));
+	let result =[];
+	for (var i =0; i < l.length; i += n) {
+		result.push(l.slice(i, i+n));
 	}
+    return result;
 }
 
 
@@ -1003,22 +1002,38 @@ function add_txn_to_mempool(txn) {
 // Merkle trees
 // ----------------------------------------------------------------------------
 
-let MerkleNode = function()
-{
-	this.val = null;
-	this.children = null;
+function MerkleNode(val = null, children = null) {
+	this.val = val;
+	this.children = children;
 	return this;
 }
 
-let get_merkle_root_of_txns=function(txns)
-{
-	//todo: to understand the original python syntax;
-	return get_merkle_root()
+function get_merkle_root_of_txns(txns) {
+	return get_merkle_root.apply(null, txns.map(t => t.id));
 }
 
-let get_merkle_root = function(leaves)
-{
-	//todo: to migrate
+function get_merkle_root(...leaves) {
+    // Builds a Merkle tree and returns the root given some leaf values.
+    if (leaves.length % 2 == 1) {
+        leaves.push(leaves[leaves.length - 1]);
+    }
+
+    function find_root(nodes) {
+        let newlevel = _chunks(nodes, 2).map(node => {
+            let [ i1, i2 ] = node;
+            return new MerkleNode(sha256d(i1.val + i2.val), [i1, i2]);
+        });
+
+        if (newlevel.length > 1) {
+            return find_root(newlevel);
+        }
+
+        return newlevel[0];
+    }
+
+    return find_root(leaves.map(l => {
+        return new MerkleNode(sha256d(l));
+    }));
 }
 
 

@@ -12,5 +12,5 @@ The original version of python, please refer to :https://github.com/jamesob/tiny
 - [x] find_utxo_in_mempool
 - [x] select_from_mempool
 - [x] add_txn_to_mempool
-- [ ] get_merkle_root_of_txns
-- [ ] get_merkle_root
+- [x] get_merkle_root_of_txns
+- [x] get_merkle_root
