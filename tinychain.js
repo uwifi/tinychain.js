@@ -764,7 +764,16 @@ function mine(block) {
 }
 
 function mine_forever() {
-	//todo: to migrate
+    // TODO: child_process
+    while (false/*true*/) {
+        let my_address = init_wallet()[2]
+        let block = assemble_and_solve_block(my_address)
+
+        if (block) {
+            connect_block(block);
+            save_to_disk();
+        }
+    }
 }
 
 
