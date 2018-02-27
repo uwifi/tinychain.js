@@ -900,10 +900,10 @@ let get_merkle_root = function(leaves)
 // Peer-to-peer
 // ----------------------------------------------------------------------------
 
-peer_hostnames = (process.env['TC_PEERS']||'').split(',').filter(function(e){return e!=''});
+var peer_hostnames = (process.env['TC_PEERS']||'').split(',').filter(function(e){return e!=''});
 
 // Signal when the initial block download has completed.
-ibd_done = null; //threading.Event()
+var ibd_done = null; //threading.Event()
 
 let GetBlocskMsg = function(){
 	//todo: to migrate
@@ -997,22 +997,58 @@ let ThreadedTCPServer = function(socketserver__ThreadingMixIn,socketserver__TCPS
 	pass
 }
 
-/*let TCPHandler = function(socketserver__BaseRequestHandler){
-	//no need: to migrate;
-}*/
+let TCPHandler = function(data,socket){
+	//finish: to migrate
+	
+peer_hostnames.push(socket.address);
 
-let TCPServer = function(){
+
+}
+
+let TCPServer = function(host, port,handle){
 	const server = net.createServer((socket) => {
-  		socket.end('goodbye\n');
+		var str ='';
+		var state = '';// no data, reading data/length ok, data ok 
+		var rawData, decodedData;
+		socket.on('data',function(buff){
+			str +=new String(data);
+			if(state == 'no data')
+			{
+				if(str.length>4)
+				{
+					lenth=parseInt(Buffer.from(str.slice(0,4)).toString('hex'),'hex');
+					state='reading data';
+				}
+			}
+
+			if(state=='reading data')
+			{
+				if(str.length>=dataLength+4)
+				{
+					rawData = str.slice(4);
+					
+					state='data ok';
+				}
+			}
+
+			if(state=='data ok')
+			{
+				decodedData = deserialize(rawData);
+				handle(decodedData);
+			}
+		});
+  		//socket.end('goodbye\n');
 	}).on('error', (err) => {
 		// handle errors here
 		throw err;
 	});
 
 	// grab an arbitrary unused port.
-	server.listen(() => {
+	server.listen({host:host,port:port},() => {
 		console.log('opened server on', server.address());
 	});
+
+
 }
 
 // Wallet
@@ -1093,12 +1129,12 @@ let main = function(){
 	//todo: to migrate;
 	load_from_disk().then(function(){
 
-	    server = ThreadedTCPServer(('0.0.0.0', PORT), TCPHandler)
-
+	    //server = ThreadedTCPServer(('0.0.0.0', PORT), TCPHandler)
+	    TCPServer('0.0.0.0',PORT,TCPHandler);
 
 
 	    logger.info(`'[p2p] listening on ${PORT}`)
-	    start_worker(server.serve_forever)
+	    //start_worker(server.serve_forever)
 
 	    if(peer_hostnames)
 	    {
@@ -1109,8 +1145,10 @@ let main = function(){
 	    }
 
 
+	    //only this should be separated.
 	    start_worker(mine_forever)
 	    //todo: to migrate
+	    //seems this should not be implemented;
 	    //[w.join() for w in workers]
 	});
 }
