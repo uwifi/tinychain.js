@@ -1000,7 +1000,20 @@ let ThreadedTCPServer = function(socketserver__ThreadingMixIn,socketserver__TCPS
 let TCPHandler = function(data,socket){
 	//finish: to migrate
 	
-peer_hostnames.push(socket.address);
+	peer_hostnames.push(socket.address);
+
+	if(isinstance(data,Transaction))
+	{
+		add_txn_to_mempool(data);
+	}
+	else if(isinstance(data, Block))
+	{
+		connect_block(data);
+	}
+	else if (data.handle && isinstance(data.handle,Function))
+	{
+		data.handle(socket,socket.address);
+	}
 
 
 }
