@@ -2,6 +2,7 @@
 
 const assert = require('assert');
 const EventEmitter = require('events');
+const packet = require('./packet');
 
 /*
  * Expose
@@ -19,7 +20,7 @@ function Parser() {
 
     EventEmitter.call(this);
 
-    this.waiting = 4;
+    this.waiting = 9;
     this.header = null;
     this.pending = [];
     this.total = 0;
@@ -97,7 +98,7 @@ Parser.prototype.parse = function parse(data) {
         return;
     }
 
-    this.waiting = 4;
+    this.waiting = 9;
     this.header = null;
 
     let packet;
@@ -113,7 +114,7 @@ Parser.prototype.parse = function parse(data) {
         return;
     }
 
-    // packet.id = header.id;
+    packet.id = header.id;
 
     try {
         this.emit('packet', packet);
@@ -123,11 +124,21 @@ Parser.prototype.parse = function parse(data) {
 };
 
 Parser.prototype.parseHeader = function parseHeader(data) {
-    const size = data.readUInt32LE(0, true);
-    return new Header(size);
+    const id = data.readUInt32LE(0, true);
+    const cmd = data.readUInt8(4, true);
+    const size = data.readUInt32LE(5, true);
+    return new Header(id, cmd, size);
 };
 
 Parser.prototype.parsePacket = function parsePacket(header, data) {
-    // return JSON.parse(data);
-    return data;
+    const MinePacket = packet.MinePacket;
+    const MineResultPacket = packet.MineResultPacket;
+
+    switch (header.cmd) {
+        case packet.Types.MINE:
+            return (new MinePacket).fromRaw(data);
+        case packet.Types.MINERESULT:
+            return (new MineResultPacket).fromRaw(data);
+        default: throw new Error('Unknown packet.');
+    }
 };
