@@ -64,6 +64,8 @@ let Promise = require('bluebird');
 var BASE58 = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz'
 var bs58 = require('base-x')(BASE58)
 
+const BN = require('bn.js');
+
 // Misc. utilities
 // ----------------------------------------------------------------------------
 
@@ -198,8 +200,8 @@ let deserialize = function(str) {
 function _chunks(l, n) {
 	//return (l[i:i + n] for i in range(0, len(l), n))
 	let result =[];
-	for (var i =0; i < l.length; i += n) {
-		result.push(l.slice(i, i+n));
+	for (var i = 0; i < l.length; i += n) {
+		result.push(l.slice(i, i + n));
 	}
     return result;
 }
@@ -739,8 +741,9 @@ function mine(block) {
 
     let start = now();
     let nonce = 0;
-    // Shifts a in binary representation b (< 32) bits to the left
-    let target = (1 << (256 - block.bits));
+
+    // python: (1 << (256 - block.bits))
+    let target = (new BN(0)).bincn(256 - block.bits).toArrayLike(Buffer, 'le', 32);
 
     mine_interrupt.clear();
 
