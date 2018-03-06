@@ -7,10 +7,11 @@ const packet = require('./packet');
 /*
  * Expose
  */
-
 module.exports = Parser;
 
-function Header(size) {
+function Header(id, cmd, size) {
+    this.id = id;
+    this.cmd = cmd;
     this.size = size;
 }
 
@@ -116,11 +117,7 @@ Parser.prototype.parse = function parse(data) {
 
     packet.id = header.id;
 
-    try {
-        this.emit('packet', packet);
-    } catch (err) {
-        console.log(err);
-    }
+    this.emit('packet', packet);
 };
 
 Parser.prototype.parseHeader = function parseHeader(data) {
@@ -131,10 +128,13 @@ Parser.prototype.parseHeader = function parseHeader(data) {
 };
 
 Parser.prototype.parsePacket = function parsePacket(header, data) {
+    const ErrorPacket = packet.ErrorPacket;
     const MinePacket = packet.MinePacket;
     const MineResultPacket = packet.MineResultPacket;
 
     switch (header.cmd) {
+        case packet.Types.ERROR:
+            return (new ErrorPacket).fromRaw(data);
         case packet.Types.MINE:
             return (new MinePacket).fromRaw(data);
         case packet.Types.MINERESULT:

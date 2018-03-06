@@ -10,6 +10,7 @@ const PACKET_TYPES = {
 // EOL: 1byte
 const HEADER_LEN = 10;
 
+// Autoincrement Packet ID
 let packetID = 0;
 
 /**
@@ -22,8 +23,8 @@ class Packet {
         this.cmd = cmd || -1;
     }
 
-    get id() {
-        return this.id;
+    set id(v) {
+        this.id = v;
     }
 
     get cmd() {
@@ -31,7 +32,7 @@ class Packet {
     }
 
     get buffer() {
-        let size = HEADER_LEN + this.getSize();
+        let size = HEADER_LEN + this.size();
         let buff = Buffer.allocUnsafe(size);
 
         buff.writeUInt32LE(this.id, 0);
@@ -41,7 +42,7 @@ class Packet {
         return buff;
     }
 
-    getSize() {
+    get size() {
         throw new Error('Abstract method.');
     }
 
@@ -51,6 +52,54 @@ class Packet {
 
     fromRaw() {
         throw new Error('Abstract method.');
+    }
+}
+
+/**
+ * ErrorPacket
+ * @constructor
+ */
+class ErrorPacket extends Packet {
+    constructor(error = new Error('Unkown Error')) {
+        super(packetTypes.ERROR);
+        this.error = {
+            message: error.message,
+            code: error.code,
+            type: error.type
+        };
+    }
+
+    get size() {
+        return Buffer.byteLength(JSON.stringify(this.error), 'utf8');
+    }
+
+    toWriter() {
+        let bw = this.buffer();
+        let err = JSON.stringify(this.error);
+
+        Buffer.from(err, 'utf8').copy(bw, 9);
+
+        return bw;
+    }
+
+    /**
+     * parse Buffer to Object
+     * @param  {Buffer} data
+     * @return {Object}
+     */
+    fromRaw(data) {
+        try {
+            let { message, code, type } = JSON.parse(data.slice(0, data.length - 1));
+            this.error = {
+                message: message,
+                code: code,
+                type: type
+            };
+        } catch (e) {
+            this.error = e.message;
+        }
+
+        return this;
     }
 }
 
@@ -68,7 +117,7 @@ class MinePacket extends Packet {
         this.max = Object.is(max, null) ? -1 : max;
     }
 
-    getSize() {
+    get size() {
         return 120;
     }
 
@@ -101,7 +150,7 @@ class MineResultPacket extends Packet {
         this.nonce = Object.is(nonce, null) ? -1 : nonce;
     }
 
-    getSize() {
+    get size() {
         return 5;
     }
 
@@ -121,6 +170,10 @@ class MineResultPacket extends Packet {
     }
 }
 
+/**
+ * Expose
+ */
 exports.Types = PACKET_TYPES;
+exports.ErrorPacket = ErrorPacket;
 exports.MinePacket = MinePacket;
 exports.MineResultPacket = MineResultPacket;

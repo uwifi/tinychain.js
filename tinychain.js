@@ -65,6 +65,7 @@ var BASE58 = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz'
 var bs58 = require('base-x')(BASE58)
 
 const BN = require('bn.js');
+const Child = require('./child');
 
 // Misc. utilities
 // ----------------------------------------------------------------------------
@@ -631,7 +632,7 @@ let get_next_work_required = function(prev_block_hash){
 
 }
 
-let assemble_and_solve_block = function (pay_coinbase_to_addr, txns = null) {
+let assemble_and_solve_block = async function (pay_coinbase_to_addr, txns = null) {
     // Construct a Block by pulling transactions from the mempool, then mine it.
 
     // TODO: Reentrant lock
@@ -668,7 +669,7 @@ let assemble_and_solve_block = function (pay_coinbase_to_addr, txns = null) {
         throw new ValueError('txns specified create a block too large');
     }
 
-    return mine(block);
+    return await mine(block);
 }
 
 let calculate_fees = function (block) {
@@ -734,7 +735,7 @@ let mine_interrupt = {
     }
 }
 
-function mine(block) {
+let mine = async function mine(block) {
     function now() {
         return Date.now ? Date.now() : +(new Date());
     }
@@ -742,10 +743,22 @@ function mine(block) {
     let start = now();
     let nonce = 0;
 
+    let prevHash = Buffer.from(block.prev_block_hash, 'hex');
+    let merkleHash = Buffer.from(block.merkle_hash, 'hex');
+
+    let data = Buffer.allocUnsafe(80);
+
+    data.writeUInt32LE(block.version, 0);
+    preHash.copy(data, 4, 0);
+    merkleHash.copy(data, 36, 0);
+    data.writeUInt32LE(block.timestamp, 68);
+    data.writeUInt32LE(block.bits, 72);
+    data.writeUInt32LE(nonce, 76);
+
     // python: (1 << (256 - block.bits))
     let target = (new BN(0)).bincn(256 - block.bits).toArrayLike(Buffer, 'le', 32);
+    let packet = new packet.MinePacket(data, target, min, max);
 
-    mine_interrupt.clear();
 
     while (parseInt(sha256d(block.header(nonce)), 16) >= target) {
         nonce += 1;
@@ -765,18 +778,17 @@ function mine(block) {
     return block;
 }
 
-function mine_forever() {
-    // TODO: child_process
-    while (false/*true*/) {
+let mine_forever = async function mine_forever() {
+    while (true) {
         let my_address = init_wallet()[2]
-        let block = assemble_and_solve_block(my_address)
+        let block = await assemble_and_solve_block(my_address)
 
         if (block) {
             connect_block(block);
             save_to_disk();
         }
     }
-}
+};
 
 
 // Validation
