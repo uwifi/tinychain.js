@@ -735,6 +735,7 @@ let mine_interrupt = {
     }
 }
 
+let child = new Child;
 let mine = async function mine(block) {
     function now() {
         return Date.now ? Date.now() : +(new Date());
@@ -757,17 +758,19 @@ let mine = async function mine(block) {
 
     // python: (1 << (256 - block.bits))
     let target = (new BN(0)).bincn(256 - block.bits).toArrayLike(Buffer, 'le', 32);
-    let packet = new packet.MinePacket(data, target, min, max);
+    let interval = 0xffffffff / 1500 | 0;
+    let min = 0;
+    let max = interval;
 
+    while (max <= 0xffffffff) {
+        nonce = await child.mine(new packet.MinePacket(data, target, min, max));
 
-    while (parseInt(sha256d(block.header(nonce)), 16) >= target) {
-        nonce += 1;
-
-        if (nonce % 10000 == 0 && mine_interrupt.is_set()) {
-            logger.info('[mining] interrupted');
-            mine_interrupt.clear();
-            return null;
+        if (nonce !== -1) {
+            break;
         }
+
+        min += interval;
+        max += interval;
     }
 
     block.nonce = nonce;

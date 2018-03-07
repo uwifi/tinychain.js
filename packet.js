@@ -23,14 +23,6 @@ class Packet {
         this.cmd = cmd || -1;
     }
 
-    set id(v) {
-        this.id = v;
-    }
-
-    get cmd() {
-        return this.cmd;
-    }
-
     get buffer() {
         let size = HEADER_LEN + this.size();
         let buff = Buffer.allocUnsafe(size);
@@ -42,7 +34,7 @@ class Packet {
         return buff;
     }
 
-    get size() {
+    size() {
         throw new Error('Abstract method.');
     }
 
@@ -69,12 +61,12 @@ class ErrorPacket extends Packet {
         };
     }
 
-    get size() {
+    size() {
         return Buffer.byteLength(JSON.stringify(this.error), 'utf8');
     }
 
     toWriter() {
-        let bw = this.buffer();
+        let bw = this.buffer;
         let err = JSON.stringify(this.error);
 
         Buffer.from(err, 'utf8').copy(bw, 9);
@@ -117,12 +109,12 @@ class MinePacket extends Packet {
         this.max = Object.is(max, null) ? -1 : max;
     }
 
-    get size() {
+    size() {
         return 120;
     }
 
     toWriter() {
-        let bw = this.buffer();
+        let bw = this.buffer;
         this.data.copy(bw, 9);
         this.target.copy(bw, 89);
         bw.writeUInt32LE(this.min, 121);
@@ -150,12 +142,12 @@ class MineResultPacket extends Packet {
         this.nonce = Object.is(nonce, null) ? -1 : nonce;
     }
 
-    get size() {
+    size() {
         return 5;
     }
 
     toWriter() {
-        let bw = this.buffer();
+        let bw = this.buffer;
         bw.writeUInt8(this.nonce === -1 ? 0 : 1);
         bw.writeUInt32LE(this.nonce);
         return bw;
