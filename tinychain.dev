@@ -1,3 +1,9 @@
+/**
+ * TODO:
+ *  - threading.RLock()
+ *  - @lru_cache(maxsize=1024)
+ */
+
 const crypto = require('crypto');
 const assert = require('assert');
 const path = require('path');
@@ -430,14 +436,12 @@ const chain_lock = {}; /* TODO: threading.RLock() */
 const orphan_blocks = [];
 
 // Used to signify the active chain in `locate_block`.
-let ACTIVE_CHAIN_IDX = 0;
+const ACTIVE_CHAIN_IDX = 0;
 
-// @with_lock(chain_lock)
 function get_current_height() {
     return len(active_chain);
 }
 
-// @with_lock(chain_lock)
 function txn_iterator(chain) {
     let txn = [];
     for (let [ height, block ] of chain.entries()) {
@@ -449,7 +453,6 @@ function txn_iterator(chain) {
     return txn;
 }
 
-// @with_lock(chain_lock)
 function locate_block(block_hash, chain = null) {
     let chains = chain ? [ chain ]
                         : [ active_chain ].concat(side_branches);
@@ -469,7 +472,6 @@ function locate_block(block_hash, chain = null) {
  * Accept a block and return the chain index we append it to.
  */
 
-// @with_lock(chain_lock)
 function connect_block(block, doing_reorg = false) {
     // Only exit early on already seen in active_chain when reorging.
     let search_chain = doing_reorg ? active_chain : None;
@@ -531,7 +533,6 @@ function connect_block(block, doing_reorg = false) {
     return chain_idx;
 }
 
-// @with_lock(chain_lock)
 function disconnect_block(block, chain = None) {
     chain = chain || active_chain;
     assert(block === chain[ chain.length - 1 ], 'Block being disconnected must be tip.');
@@ -567,7 +568,6 @@ function find_txout_for_txin(txin, chain) {
     }
 }
 
-// @with_lock(chain_lock)
 function reorg_if_necessary() {
     let reorged = false;
     // May change during this call.
@@ -592,7 +592,6 @@ function reorg_if_necessary() {
     return reorged;
 }
 
-// @with_lock(chain_lock)
 function try_reorg(branch, branch_idx, fork_idx) {
     /**
      * Node NOT need
@@ -649,7 +648,10 @@ function try_reorg(branch, branch_idx, fork_idx) {
  * Grep for: GetMedianTimePast.
  */
 function get_median_time_past(num_last_blocks) {
-    let last_n_blocks = active_chain.reverse().slice(0, num_last_blocks);
+    // TODO: improve
+    let copy_chain = active_chain.concat([]);
+    let last_n_blocks = copy_chain.reverse().slice(0, num_last_blocks);
+
     if (!len(last_n_blocks)) {
         return 0;
     }
@@ -661,20 +663,38 @@ function get_median_time_past(num_last_blocks) {
 // ----------------------------------------------------------------------------
 const CHAIN_PATH = path.join(__dirname, process.env['TC_CHAIN_PATH'] || 'chain.dat');
 
-// @with_lock(chain_lock)
 function save_to_disk() {
-    // todo
+    // logger.info(`saving chain with ${len(active_chain)} blocks`);
+    fs.writeFileSync(CHAIN_PATH, encode_socket_data(active_chain));
 }
 
-// @with_lock(chain_lock)
 function load_from_disk() {
-    // todo
+    if (!fs.existsSync(CHAIN_PATH)) {
+        return;
+    }
+
+    try {
+        // TODO: read stream
+        let data = fs.readFileSync(CHAIN_PATH);
+        let dataLen = data.readUInt32BE(0);
+        let newBlocks = deserialize(data.slice(4).toString());
+
+        for (let block of newBlocks) {
+            connect_block(block);
+        }
+    } catch (e) {
+        logger.exception('load chain failed, starting from genesis');
+    }
 }
 
 // UTXO set
 // ----------------------------------------------------------------------------
 
 class UTXOs extends Map {
+    constructor() {
+        // TODO: serialize & deserialize
+    }
+
     set(k, v) {
         super.set(this.toStr(k), v);
     }
@@ -744,7 +764,7 @@ function find_utxo_in_list(txin, txns) {
  * must solve.
  */
 function get_next_work_required(prev_block_hash) {
-    if (!prev_block_hash) {
+    if (prev_block_hash === 'None') {
         return Params.INITIAL_DIFFICULTY_BITS;
     }
 
@@ -772,6 +792,38 @@ function get_next_work_required(prev_block_hash) {
         // Wow, that's unlikely.
         return prev_block.bits;
     }
+}
+
+/**
+ * Construct a Block by pulling transactions from the mempool, then mine it.
+ */
+function assemble_and_solve_block(pay_coinbase_to_addr, txns = None) {
+    // todo implement
+}
+
+/**
+ * Given the txns in a Block, subtract the amount of coin output from the
+ * inputs. This is kept as a reward by the miner.
+ */
+function calculate_fees(block) {
+    // todo implement
+}
+
+function get_block_subsidy() {
+    let halvings = Math.floor(len(active_chain) / Params.HALVE_SUBSIDY_AFTER_BLOCKS_NUM);
+
+    if halvings >= 64:
+        return 0
+
+    return Math.floor(50 * Params.BELUSHIS_PER_COIN / Math.pow(2, halvings));
+}
+
+function mine(block) {
+    // todo implement
+}
+
+function mine_forever() {
+    // todo implement
 }
 
 // Validation
@@ -831,13 +883,33 @@ function validate_txn(txn, as_coinbase = false, siblings_in_block = None, allow_
 }
 
 function validate_signature_for_spend(txin, utxo, txn) {
-    // todo
-}
-function build_spend_message(to_spend, pk, sequence, txouts) {
-    // todo
+    let pubkey_as_addr = pubkey_to_address(txin.unlock_pk);
+    let verifying_key = crypto.createVerify('ecdsa-with-SHA1');
+
+    if (pubkey_as_addr != utxo.to_address) {
+        throw new TxUnlockError("Pubkey doesn't match");
+    }
+
+    let spend_msg = build_spend_message(
+        txin.to_spend, txin.unlock_pk, txin.sequence, txn.txouts);
+
+    verifying_key.update(spend_msg);
+
+    if (verifying_key.verify(txin.unlock_pk, txin.unlock_sig)) {
+        return true;
+    }
+    else {
+        throw new TxUnlockError("Signature doesn't match");
+    }
 }
 
-// @with_lock(chain_lock)
+/**
+ * This should be ~roughly~ equivalent to SIGHASH_ALL.
+ */
+function build_spend_message(to_spend, pk, sequence, txouts) {
+    return sha256d(serialize(to_spend) + sequence + pk + serialize(txouts));
+}
+
 function validate_block(block) {
     if (!len(block.txns)) {
         throw new BlockValidationError('txns empty');
@@ -849,6 +921,7 @@ function validate_block(block) {
 
     let a = new BN(block.id, 16);
     let b = new BN(0);
+
     if (a.gt(b.bincn(256 - block.bits))) {
         throw new BlockValidationError("Block header doesn't satisfy bits");
     }
@@ -938,6 +1011,370 @@ const mempool = new Map();
 // transactions.
 const orphan_txns = [];
 
+function find_utxo_in_mempool(txin) {
+    let { txid, idx } = txin.to_spend;
+    let txout;
+
+    try {
+        txout = mempool.get(txid).txouts[idx];
+    } catch (e) {
+        // logger.debug("Couldn't find utxo in mempool for %s", txin);
+        return None;
+    }
+
+    return new UnspentTxOut({
+        ...txout,
+        txid: txid,
+        is_coinbase: false,
+        height: -1,
+        txout_idx: idx
+    });
+}
+
+/**
+ * Fill a Block with transactions from the mempool.
+ */
+function select_from_mempool(block) {
+    let added_to_block = new Set();
+
+    function check_block_size(block) {
+        return len(serialize(block)) < Params.MAX_BLOCK_SERIALIZED_SIZE;
+    }
+
+    function try_add_to_block(block, txid) {
+        if (added_to_block.has(txid)) {
+            return block;
+        }
+
+        let tx = mempool.get(txid);
+
+        // For any txin that can't be found in the main chain, find its
+        // transaction in the mempool (if it exists) and add it to the block.
+        for (const txin of tx.txins) {
+
+            if (utxo_set.has(txin.to_spend)) {
+                continue;
+            }
+
+            let in_mempool = find_utxo_in_mempool(txin);
+
+            if (!in_mempool) {
+                // logger.debug(`Couldn't find UTXO for ${txin}`);
+                return null;
+            }
+
+            block = try_add_to_block(block, in_mempool.txid);
+            if (!block) {
+                // logger.debug("Couldn't add parent")
+                return null;
+            }
+        }
+
+        let newblock = new Block({
+            version: block.version,
+            prev_block_hash: block.prev_block_hash,
+            merkle_hash: block.merkle_hash,
+            timestamp: block.timestamp,
+            bits: block.bits,
+            nonce: block.nonce,
+            txns: block.txns.concat([ tx ])
+        });
+
+        if (check_block_size(newblock)) {
+            // logger.debug(`added tx ${tx.id} to block`);
+            added_to_block.add(txid);
+            return newblock;
+        }
+
+        return block;
+    }
+
+    for (const txid in mempool) {
+        let newblock = try_add_to_block(block, txid);
+
+        if (check_block_size(newblock)) {
+            block = newblock;
+        }
+        else {
+            break;
+        }
+    }
+
+    return block;
+}
+
+function add_txn_to_mempool(txn) {
+    if (mempool.has(txn.id)) {
+        // logger.info(`txn ${txn.id} already seen`);
+        return;
+    }
+
+    try {
+        txn = validate_txn(txn);
+    } catch (e) {
+        if (e.to_orphan) {
+            // logger.info(`txn ${e.to_orphan.id} submitted as orphan`);
+            orphan_txns.push(e.to_orphan);
+            return;
+        }
+
+        logger.exception('txn rejected');
+        return;
+    }
+
+    // logger.info(`txn ${txn.id} added to mempool`);
+    mempool.set(txn.id, txn);
+
+    for (let peer of peer_hostnames) {
+        send_to_peer(txn, peer);
+    }
+}
+
+// Merkle trees
+// ----------------------------------------------------------------------------
+
+class MerkleNode extends Map {
+    constructor({ val = '', children = [] }) {
+        super([
+            ['val', val],
+            ['children', children]
+        ]);
+    }
+
+    get val() {
+        return this.get('val');
+    }
+
+    get children() {
+        return this.get('children');
+    }
+}
+
+function get_merkle_root_of_txns(txns) {
+    return get_merkle_root.apply(null, txns.map(t => t.id));
+}
+
+/**
+ * Builds a Merkle tree and returns the root given some leaf values.
+ */
+function get_merkle_root(...leaves) {
+    if (len(leaves) % 2 == 1) {
+        leaves.push(leaves[len(leaves) - 1]);
+    }
+
+    function find_root(nodes) {
+        let newlevel = _chunks(nodes, 2).map(node => {
+            let [ i1, i2 ] = node;
+            return new MerkleNode({
+                val: sha256d(i1.val + i2.val),
+                children: [i1, i2]
+            });
+        });
+
+        if (newlevel.length > 1) {
+            return find_root(newlevel);
+        }
+
+        return newlevel[0];
+    }
+
+    return find_root(leaves.map(l => {
+        return new MerkleNode({ val: sha256d(l) });
+    }));
+}
+
+// Peer-to-peer
+// ----------------------------------------------------------------------------
+
+const peer_hostnames = (process.env['TC_PEERS'] || '').splite(',').filter(p => p);
+
+// Signal when the initial block download has completed.
+const ibd_done = {}; /*threading.Event()*/
+
+/**
+ * See https://bitcoin.org/en/developer-guide#blocks-first
+ * Request blocks during initial sync
+ */
+class GetBlocksMsg extends Map {
+    constructor({ from_blockid, CHUNK_SIZE = 50 }) {
+        super([
+            ['from_blockid', from_blockid],
+            ['CHUNK_SIZE', CHUNK_SIZE]
+        ]);
+    }
+
+    get from_blockid() {
+        return this.get('from_blockid');
+    }
+
+    get CHUNK_SIZE() {
+        return this.get('CHUNK_SIZE');
+    }
+
+    handle(sock, peer_hostname) {
+        // logger.debug(`[p2p] recv getblocks from ${peer_hostname}`);
+
+        let [ _, height, __ ] = locate_block(this.from_blockid, active_chain);
+
+        // If we don't recognize the requested hash as part of the active
+        // chain, start at the genesis block.
+        height = height || 1;
+
+        let blocks = active_chain.slice(height, height + this.CHUNK_SIZE);
+
+        // logger.debug(`[p2p] sending ${len(blocks)} to ${peer_hostname}`);
+        send_to_peer(new InvMsg({ blocks: blocks }), peer_hostname)
+    }
+}
+
+/**
+ * Convey blocks to a peer who is doing initial sync
+ */
+class InvMsg extends Map {
+    constructor({ blocks }) {
+        super([
+            ['blocks', blocks]
+        ]);
+    }
+
+    get blocks() {
+        return this.get('blocks');
+    }
+
+    handle(sock, peer_hostname) {
+        // logger.info(`[p2p] recv inv from ${peer_hostname}`);
+        //
+
+        let new_blocks = this.blocks.filter(b => {
+            return !locate_block(b.id)[0];
+        });
+
+        if (!len(new_blocks)) {
+            // logger.info('[p2p] initial block download complete')
+            // ibd_done.set()
+
+            return;
+        }
+
+        for (let block of new_blocks) {
+            connect_block(block);
+        }
+
+        let new_tip_id = active_chain[len(active_chain) - 1].id;
+        // logger.info(`[p2p] continuing initial block download at ${new_tip_id}');
+
+        // "Recursive" call to continue the initial block sync.
+        send_to_peer(new GetBlocksMsg({ from_blockid: new_tip_id }));
+    }
+}
+
+/**
+ * List all UTXOs
+ */
+class GetUTXOsMsg extends Map {
+    handle(sock, peer_hostname) {
+        // sock.send(encode_socket_data(list(utxo_set.items())))
+    }
+}
+
+class SocketMessageHandle {
+    constructor() {
+        this.total = 0;
+        this.pending = [];
+        this.waiting = 4;
+        this.isHeader = true;
+    }
+
+    recv(data) {
+        this.total += data.length;
+        this.pending.push(data);
+
+        while (this.total >= this.waiting) {
+            this._parse(this._read(this.waiting));
+        };
+    }
+
+    _read(size) {
+        if (size === 0) {
+            return Buffer.alloc(0);
+        }
+
+        const pending = this.pending[0];
+        if (pending.length > size) {
+            const chunk = pending.slice(0, size);
+            this.pending[0] = pending.slice(size);
+            this.total -= chunk.length;
+            return chunk;
+        }
+
+        if (pending.length === size) {
+            const chunk = this.pending.shift();
+            this.total -= chunk.length;
+            return chunk;
+        }
+
+        const chunk = Buffer.allocUnsafe(size);
+        let off = 0;
+
+        while (off < chunk.length) {
+            const pending = this.pending[0];
+            const len = pending.copy(chunk, off);
+
+            if (len === pending.length)
+                this.pending.shift();
+            else
+                this.pending[0] = pending.slice(len);
+
+            off += len;
+        }
+
+        this.total -= chunk.length;
+
+        return chunk;
+    }
+
+    _parse(data) {
+        if (!data.length) {
+            return;
+        }
+
+        if (this.isHeader) {
+            this.isHeader = false;
+            this.waiting = data.readUInt32BE(0);
+            return;
+        }
+
+        this.isHeader = true;
+        this.waiting = 4;
+
+        let obj = deserialize(data.toString());
+
+        // TODO: handle message
+    }
+}
+const message = new SocketMessageHandle;
+
+function read_all_from_socket(chunk) {
+    message.recv(chunk);
+}
+
+function send_to_peer(data, peer = None) {
+    // TODO implement
+}
+
+/**
+ * Our protocol is: first 4 bytes signify msg length.
+ */
+function encode_socket_data(data) {
+    let to_send = Buffer.from(serialize(data), 'utf8');
+    let len = to_send.length + 4;
+    let buf = Buffer.allocUnsafe(len);
+
+    buf.writeUInt32BE(len - 4, 0);
+    to_send.copy(buf, 4);
+
+    return buf;
+}
 
 // Wallet
 // ----------------------------------------------------------------------------
@@ -954,7 +1391,6 @@ function pubkey_to_address(pubkey) {
     return bs58check.encode(Buffer.concat([bPrefix, ripe]));
 }
 
-// @lru_cache()
 function init_wallet(path = null) {
     path = path || WALLET_PATH;
 
@@ -973,7 +1409,7 @@ function init_wallet(path = null) {
 
     ecdh.setPrivateKey(signing_key, opts.encoding);
 
-    verifying_key = ecdh.getPublicKey('hex');
+    verifying_key = ecdh.getPublicKey(opts.encoding);
     my_address = pubkey_to_address(verifying_key);
 
     return [ signing_key, verifying_key, my_address ];
@@ -1090,7 +1526,7 @@ function _chunks(l, n) {
     for (let i = 0; i < l.length; i += n) {
         chunks.push(l.slice(i, i + n));
     }
-    return result;
+    return chunks;
 }
 
 // console.log(serialize(genesis_block));
@@ -1101,11 +1537,6 @@ function _chunks(l, n) {
 // console.log(locate_block('000000154275885a72c004d02aaa9524fc0c4896aef0b0f3bcde2de38f9be561'))
 // console.log(CHAIN_PATH);
 // console.log(init_wallet());
-
-
-
-
-
 
 
 
