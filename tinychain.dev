@@ -8,6 +8,7 @@ const crypto = require('crypto');
 const assert = require('assert');
 const path = require('path');
 const fs = require('fs');
+const net = require('net');
 const BN = require('bn.js');
 const RIPEMD160 = require('ripemd160');
 const bs58check = require('bs58check');
@@ -315,7 +316,7 @@ class Transaction extends Map {
 
         let txout = new TxOut({
             'value': value,
-            'pay_to_addr': pay_to_addr
+            'to_address': pay_to_addr
         });
 
         return new Transaction({
@@ -522,7 +523,7 @@ function connect_block(block, doing_reorg = false) {
     }
 
     if (!doing_reorg && reorg_if_necessary() || chain_idx === ACTIVE_CHAIN_IDX) {
-        // mine_interrupt.set()
+        mine_interrupt.set();
         // logger.info(`block accepted height=${len(active_chain) - 1} txns=${len(block.txns)}`);
     }
 
@@ -691,10 +692,6 @@ function load_from_disk() {
 // ----------------------------------------------------------------------------
 
 class UTXOs extends Map {
-    constructor() {
-        // TODO: serialize & deserialize
-    }
-
     set(k, v) {
         super.set(this.toStr(k), v);
     }
@@ -713,6 +710,10 @@ class UTXOs extends Map {
 
     toStr(k) {
         return [...k].toString();
+    }
+
+    toJSON() {
+        return Array.from(this.entries());
     }
 }
 
@@ -795,36 +796,171 @@ function get_next_work_required(prev_block_hash) {
 }
 
 /**
- * Construct a Block by pulling transactions from the mempool, then mine it.
- */
-function assemble_and_solve_block(pay_coinbase_to_addr, txns = None) {
-    // todo implement
-}
-
-/**
  * Given the txns in a Block, subtract the amount of coin output from the
  * inputs. This is kept as a reward by the miner.
  */
 function calculate_fees(block) {
-    // todo implement
+    let fee = 0;
+
+    function utxo_from_block(txin) {
+        let tx = blocks.txns.filter(t => {
+            return t.id === txin.to_spend.txid;
+        }).map(t => t.txouts);
+
+        if (len(tx)) {
+            return tx[0][txin.to_spend.txout_idx];
+        }
+
+        return None;
+    }
+
+    function find_utxo(txin) {
+        return utxo_set.get(txin.to_spend) || utxo_from_block(txin);
+    }
+
+    for (let txn of block.txns) {
+        let spent = txn.txins.reduce(sum, i => {
+            return sum + find_utxo(i).value;
+        });
+
+        let sent = txn.txouts.reduce(sum, o => {
+            return sum + o.value;
+        });
+
+        fee += (spent - sent);
+    }
+
+    return fee;
 }
 
 function get_block_subsidy() {
     let halvings = Math.floor(len(active_chain) / Params.HALVE_SUBSIDY_AFTER_BLOCKS_NUM);
 
-    if halvings >= 64:
-        return 0
+    if (halvings >= 64) {
+        return 0;
+    }
 
     return Math.floor(50 * Params.BELUSHIS_PER_COIN / Math.pow(2, halvings));
 }
 
-function mine(block) {
-    // todo implement
-}
+/**
+ * Construct a Block by pulling transactions from the mempool, then mine it.
+ */
+const assemble_and_solve_block = async function (pay_coinbase_to_addr, txns = None) {
+    let prev_block_hash = active_chain[len(active_chain) - 1].id;
 
-function mine_forever() {
-    // todo implement
-}
+    let block = new Block({
+        'version': 0,
+        'prev_block_hash': prev_block_hash,
+        'merkle_hash': '',
+        'timestamp': Date.time(),
+        'bits': get_next_work_required(prev_block_hash),
+        'nonce': 0,
+        'txns': txns || []
+    });
+
+    if (!len(block.txns)) {
+        block = select_from_mempool(block);
+    }
+
+    let fees = calculate_fees(block);
+    let my_address = init_wallet()[2];
+    let coinbase_txn = Transaction.create_coinbase(
+        my_address, (get_block_subsidy() + fees), len(active_chain));
+
+    block.set('txns', [ coinbase_txn ].concat(block.txns));
+    block.set('merkle_hash',get_merkle_root_of_txns(block.txns).val);
+
+    if (len(serialize(block)) > Params.MAX_BLOCK_SERIALIZED_SIZE) {
+        throw new Error('txns specified create a block too large');
+    }
+
+    return await mine(block);
+};
+
+// Signal to communicate to the mining thread that it should stop mining because
+// we've updated the chain with a new block.
+const mine_interrupt = {
+    is_set: function () {
+        return this._interrupted;
+    },
+    set: function () {
+        this._interrupted = true;
+    },
+    clear: function () {
+        this._interrupted = false;
+    }
+};
+
+const mine = async function mine(block) {
+    let nonce = 0;
+    let target = (new BN(0)).bincn(256 - block.bits);
+
+    let interval = 0xffffffff / 1500 | 0;
+    let min = 0;
+    let max = interval;
+
+    while (max <= 0xffffffff) {
+        nonce = await new Promise((resolve, reject) => {
+            mine_interrupt.clear();
+
+            setImmediate((_min, _max) => {
+                let nonce = _min;
+                while (nonce <= _max) {
+                    if (mine_interrupt.is_set()) {
+                        mine_interrupt.clear();
+                        return reject();
+                    }
+
+                    let hex = sha256d(block.header(nonce));
+                    let sig = new BN(hex, 16);
+
+                    if (sig.lte(target)) {
+                        return resolve(nonce);
+                    }
+
+                    nonce++;
+                }
+
+                resolve(-1);
+            }, min, max);
+
+        }).catch(e => null);
+
+        if (nonce === null || nonce !== -1) {
+            break;
+        }
+
+        min += interval;
+        max += interval;
+    }
+
+    if (nonce === null) {
+        return None;
+    }
+
+    return new Block({
+        version: block.version,
+        prev_block_hash: block.prev_block_hash,
+        merkle_hash: block.merkle_hash,
+        timestamp: block.timestamp,
+        bits: block.bits,
+        nonce: nonce,
+        txns: block.txns
+    });
+};
+
+const mine_forever = async function mine_forever() {
+    for (;;) {
+        let my_address = init_wallet()[2];
+        let block = await assemble_and_solve_block(my_address);
+
+        if (block) {
+            connect_block(block);
+            save_to_disk();
+        }
+    }
+};
 
 // Validation
 // ----------------------------------------------------------------------------
@@ -1089,7 +1225,7 @@ function select_from_mempool(block) {
         return block;
     }
 
-    for (const txid in mempool) {
+    for (const txid of mempool.keys()) {
         let newblock = try_add_to_block(block, txid);
 
         if (check_block_size(newblock)) {
@@ -1186,7 +1322,7 @@ function get_merkle_root(...leaves) {
 // Peer-to-peer
 // ----------------------------------------------------------------------------
 
-const peer_hostnames = (process.env['TC_PEERS'] || '').splite(',').filter(p => p);
+const peer_hostnames = new Set((process.env['TC_PEERS'] || '').split(',').filter(p => p));
 
 // Signal when the initial block download has completed.
 const ibd_done = {}; /*threading.Event()*/
@@ -1273,7 +1409,41 @@ class InvMsg extends Map {
  */
 class GetUTXOsMsg extends Map {
     handle(sock, peer_hostname) {
-        // sock.send(encode_socket_data(list(utxo_set.items())))
+        sock.send(encode_socket_data(utxo_set));
+    }
+}
+
+/**
+ * List the mempool
+ */
+class GetMempoolMsg extends Map {
+    handle(sock, peer_hostname) {
+        sock.send(encode_socket_data(Array.from(mempool.keys())));
+    }
+}
+
+/**
+ * Get the active chain in its entirety.
+ */
+class GetActiveChainMsg extends Map {
+    handle(sock, peer_hostname) {
+        sock.send(encode_socket_data(active_chain));
+    }
+}
+
+class AddPeerMsg extends Map {
+    constructor({ peer_hostname }) {
+        super([
+            ['peer_hostname', peer_hostname]
+        ]);
+    }
+
+    get peer_hostname() {
+        return this.get('peer_hostname');
+    }
+
+    handle(sock, peer_hostname) {
+        peer_hostnames.add(this.peer_hostname);
     }
 }
 
@@ -1285,12 +1455,12 @@ class SocketMessageHandle {
         this.isHeader = true;
     }
 
-    recv(data) {
+    recv(sock, data) {
         this.total += data.length;
         this.pending.push(data);
 
         while (this.total >= this.waiting) {
-            this._parse(this._read(this.waiting));
+            this._parse(sock, this._read(this.waiting));
         };
     }
 
@@ -1333,7 +1503,7 @@ class SocketMessageHandle {
         return chunk;
     }
 
-    _parse(data) {
+    _parse(sock, data) {
         if (!data.length) {
             return;
         }
@@ -1347,9 +1517,23 @@ class SocketMessageHandle {
         this.isHeader = true;
         this.waiting = 4;
 
-        let obj = deserialize(data.toString());
+        let request = deserialize(data.toString());
+        let peer_hostname = sock.remoteAddress;
 
-        // TODO: handle message
+        peer_hostnames.add(peer_hostname)
+
+        if (request.hasOwnProperty('handle') && request.handle instanceof Function) {
+            // logger.info(`received msg ${request} from peer {peer_hostname}`);
+            request.handle(sock, peer_hostname);
+        }
+        else if (request instanceof Transaction) {
+            // logger.info(`received txn ${request.id} from peer ${peer_hostname}`);
+            add_txn_to_mempool(request);
+        }
+        else if (request instanceof Block) {
+            // logger.info(f"received block {request.id} from peer {peer_hostname}")
+            connect_block(request);
+        }
     }
 }
 const message = new SocketMessageHandle;
@@ -1358,8 +1542,52 @@ function read_all_from_socket(chunk) {
     message.recv(chunk);
 }
 
-function send_to_peer(data, peer = None) {
-    // TODO implement
+/**
+ * Send a message to a (by default) random peer.
+ */
+const send_to_peer = async function send_to_peer(data, peer = None) {
+    if (!peer) {
+        let rnd = Math.floor(Math.random() * len(peer_hostnames));
+        if (!(peer = Array.from(peer_hostnames)[rnd])) {
+            return;
+        }
+    }
+
+    let tries_left = 3;
+
+    while (tries_left > 0) {
+        let code = await new Promise((resolve, reject) => {
+
+            function retry() {
+                tries_left -= 1;
+                reject();
+            }
+
+            let socket = new net.Socket;
+
+            socket.setTimeout(1000, () => {
+                socket.end();
+                retry();
+            });
+
+            socket.connect(PORT, peer, (sock) => {
+                sock.end(encode_socket_data(data));
+                resolve('ok');
+            });
+
+            socket.on('error', (e) => {
+                logger.exception(`failed to send to peer ${peer}`);
+                retry();
+            });
+        }).catch(e => null);
+
+        if (code === 'ok') {
+            return code;
+        }
+    }
+
+    // logger.info(`[p2p] removing dead peer ${peer}`);
+    peer_hostnames.delete(peer);
 }
 
 /**
@@ -1379,7 +1607,7 @@ function encode_socket_data(data) {
 // Wallet
 // ----------------------------------------------------------------------------
 
-const WALLET_PATH = path.join(__dirname, process.env['TC_WALLET_PATH'] || 'wallet.dat');
+const WALLET_PATH = process.env['TC_WALLET_PATH'] || 'wallet.dat';
 
 function pubkey_to_address(pubkey) {
     let bPubkey = Buffer.from(bytes(pubkey), 'hex');
@@ -1391,20 +1619,20 @@ function pubkey_to_address(pubkey) {
     return bs58check.encode(Buffer.concat([bPrefix, ripe]));
 }
 
-function init_wallet(path = null) {
-    path = path || WALLET_PATH;
+function init_wallet(wallet = null) {
+    wallet = path.join(__dirname, wallet || WALLET_PATH);
 
     let signing_key, verifying_key, my_address;
     let ecdh = crypto.createECDH('secp256k1');
     let opts = { encoding: 'hex' };
 
-    if (fs.existsSync(path)) {
-        signing_key = fs.readFileSync(path, opts);
+    if (fs.existsSync(wallet)) {
+        signing_key = fs.readFileSync(wallet, opts);
     }
     else {
         ecdh.generateKeys();
         signing_key = ecdh.getPrivateKey(opts.encoding);
-        fs.writeFileSync(path, signing_key, opts);
+        fs.writeFileSync(wallet, signing_key, opts);
     }
 
     ecdh.setPrivateKey(signing_key, opts.encoding);
@@ -1451,11 +1679,17 @@ const CLASSES_MAP = new Map([
     TxOut,
     Transaction,
     UnspentTxOut,
-    OutPoint
+    OutPoint,
+    GetBlocksMsg,
+    InvMsg,
+    GetUTXOsMsg,
+    GetMempoolMsg,
+    GetActiveChainMsg,
+    AddPeerMsg
 ].map(cls => [ cls.name, cls ]));
 
 function len(o) {
-    if (o instanceof Map) {
+    if (o instanceof Map || o instanceof Set) {
         return o.size;
     }
 
@@ -1529,6 +1763,14 @@ function _chunks(l, n) {
     return chunks;
 }
 
+// Main
+// ----------------------------------------------------------------------------
+const PORT = process.env['TC_PORT'] || 9999;
+
+function main() {
+    load_from_disk();
+}
+
 // console.log(serialize(genesis_block));
 // console.info(deserialize(serialize(genesis_block)));
 // console.log(txn_iterator(active_chain));
@@ -1537,6 +1779,10 @@ function _chunks(l, n) {
 // console.log(locate_block('000000154275885a72c004d02aaa9524fc0c4896aef0b0f3bcde2de38f9be561'))
 // console.log(CHAIN_PATH);
 // console.log(init_wallet());
+// mine_forever()
+
+
+
 
 
 
