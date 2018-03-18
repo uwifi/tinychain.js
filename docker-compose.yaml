@@ -5,10 +5,12 @@ services:
   node1:
     build: .
     image: tinychain.js
+    container_name: node1
     ports:
       - "9999:9999"
 
   node2:
     image: tinychain.js
+    container_name: node2
     environment:
       TC_PEERS: 'node1'

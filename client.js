@@ -4,9 +4,25 @@ const yargs = require('yargs');
 const rsasign = require('jsrsasign');
 const tc = require('./tinychain');
 
-const log4js = require('log4js');
-const logger = log4js.getLogger('client');
-logger.level = 'debug';
+const { createLogger, format, transports } = require('winston');
+const { combine, timestamp, label, printf } = format;
+const logger = createLogger({
+    'level': process.env['TC_LOG_LEVEL'] || 'debug',
+    'format': combine(
+        label({
+            label: 'client'
+        }),
+        format.splat(),
+        format.simple(),
+        timestamp(),
+        printf(info => {
+          return `${info.timestamp} [${info.label}] ${info.level}: ${info.message}`;
+        })
+    ),
+    'transports': [
+        new transports.Console()
+    ]
+});
 
 const argv = yargs.options({
     'w': {
@@ -82,12 +98,13 @@ function send_message(data) {
     });
 }
 
-function get_balance() {
+function get_balance(address) {
+    address = address || my_address;
     return send_message(new tc.GetUTXOsMsg).then(utxos => {
         return utxos.map(utxo => {
             return utxo[1];
         }).filter(utxo => {
-            return utxo.to_address === my_address;
+            return utxo.to_address === address;
         });
     });
 }
@@ -114,7 +131,7 @@ function make_txin(outpoint, txouts) {
 if (argv.balance) {
     (async function () {
         try {
-            let coins = await get_balance();
+            let coins = await get_balance(argv._[0]);
             let value = coins.reduce((sum, utxo) => {
                 return sum + utxo.value;
             }, 0);

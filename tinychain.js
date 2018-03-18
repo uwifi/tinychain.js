@@ -14,9 +14,26 @@ const RIPEMD160 = require('ripemd160');
 const bs58check = require('bs58check');
 const rsasign = require('jsrsasign');
 
-const log4js = require('log4js');
-const logger = log4js.getLogger('tinychain');
-logger.level = process.env['TC_LOG_LEVEL'] || 'debug';
+const { createLogger, format, transports } = require('winston');
+const { combine, timestamp, label, printf } = format;
+
+const logger = createLogger({
+    'level': process.env['TC_LOG_LEVEL'] || 'debug',
+    'format': combine(
+        label({
+            label: process.env['TC_LOG_LABEL'] || 'tinychain'
+        }),
+        format.splat(),
+        format.simple(),
+        timestamp(),
+        printf(info => {
+          return `${info.timestamp} [${info.label}] ${info.level}: ${info.message}`;
+        })
+    ),
+    'transports': [
+        new transports.Console()
+    ]
+});
 
 const None = null;
 const Params = Object.create(null, {
@@ -930,8 +947,6 @@ const mine = async function mine(block) {
 
         }).catch(e => null);
 
-        logger.info('current nonce: %s - %s', min, max);
-
         if (nonce === null || nonce !== -1) {
             break;
         }
@@ -943,6 +958,12 @@ const mine = async function mine(block) {
     if (nonce === null) {
         return None;
     }
+
+    logger.info('mined nonce: %s', nonce);
+    // duration = int(time.time() - start) or 0.001
+    // khs = (block.nonce // duration) // 1000
+    // logger.info(
+    //     f'[mining] block found! {duration} s - {khs} KH/s - {block.id}')
 
     return new Block({
         version: block.version,
