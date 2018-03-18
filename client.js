@@ -10,7 +10,7 @@ const logger = createLogger({
     'level': process.env['TC_LOG_LEVEL'] || 'debug',
     'format': combine(
         label({
-            label: 'client'
+            label: process.env['TC_LOG_LABEL'] || 'client'
         }),
         format.splat(),
         format.simple(),

@@ -319,6 +319,12 @@ class Transaction extends Map {
             throw new TxnValidationError('Missing txouts or txins');
         }
 
+        for (let txout of this.txouts) {
+            if (txout.value < 0) {
+                throw new TxnValidationError('txout.value negative');
+            }
+        }
+
         if (len(serialize(this)) > Params.MAX_BLOCK_SERIALIZED_SIZE) {
             throw new TxnValidationError('Too large');
         }
@@ -918,6 +924,7 @@ const mine_interrupt = {
 };
 
 const mine = async function mine(block) {
+    let start = Date.time();
     let nonce = 0;
     let target = (new BN(0)).bincn(256 - block.bits);
 
@@ -959,11 +966,9 @@ const mine = async function mine(block) {
         return None;
     }
 
-    logger.info('mined nonce: %s', nonce);
-    // duration = int(time.time() - start) or 0.001
-    // khs = (block.nonce // duration) // 1000
-    // logger.info(
-    //     f'[mining] block found! {duration} s - {khs} KH/s - {block.id}')
+    let duration = (Date.time() - start) || 0.001;
+    let khs = Math.floor((nonce / duration) / 1000);
+    logger.info('mined block! %d s - %d KH/s %d', duration, khs, nonce);
 
     return new Block({
         version: block.version,
