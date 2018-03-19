@@ -29,3 +29,20 @@ The original version of python, please refer to :https://github.com/jamesob/tiny
      2018-03-19T10:38:54.858Z [client] info your address is 1898KEjkziq9uRCzaVUUoBwzhURt4nrbP8
      Mined in 0000000726752f82af3d0f271fd61337035256051a9a1e5881e82d93d8e42d66 at height 5
     ```
+
+- Get `client.js` help
+    ```
+    $ node client.js --help
+
+    Options:
+      --version      Show version number                                   [boolean]
+      -w, --wallet   Choose your wallet             [string] [default: "wallet.dat"]
+      -b, --balance  Get balance                                           [boolean]
+      -s, --send     Send to an address                                     [string]
+      -v, --value    Send value to an adress                                [number]
+      -f, --fee      Send fee                               [number] [default: 5000]
+      -t, --txid     Get the `Transaction` status                           [string]
+      -p, --port     Set peer port                          [number] [default: 9999]
+      -n, --node     Set peer node                   [string] [default: "localhost"]
+      --help         Show help                                             [boolean]
+    ```
