@@ -150,6 +150,7 @@ if (argv.balance) {
 if (argv.send) {
     (async function () {
         try {
+            let my_addr = argv._[0] || my_address;
             let utxos = await get_balance();
             let to_address = argv.send;
             let value = argv.value;
@@ -179,7 +180,7 @@ if (argv.send) {
                 txouts.push(
                     new tc.TxOut({
                         value: change,
-                        to_address: my_address
+                        to_address: my_addr
                     })
                 );
             }
@@ -193,7 +194,7 @@ if (argv.send) {
                 txouts: txouts
             }));
 
-            logger.info('[Send value] %d from %s to %s', value, my_address, to_address);
+            logger.info('[Send value] %d from %s to %s', value, my_addr, to_address);
 
         } catch (err) {
             logger.error('[Send value]: %o', err);
