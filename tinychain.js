@@ -8,6 +8,7 @@ const crypto = require('crypto');
 const assert = require('assert');
 const path = require('path');
 const fs = require('fs');
+const cp = require('child_process');
 const net = require('net');
 const BN = require('bn.js');
 const RIPEMD160 = require('ripemd160');
@@ -908,61 +909,92 @@ const assemble_and_solve_block = async function (pay_coinbase_to_addr, txns = No
     return await mine(block);
 };
 
+class Child {
+    constructor(resolve, reject, file = 'worker.js') {
+        const bin = process.argv[0];
+        const options = { stdio: 'pipe', env: process.env };
+
+        this._resolve = resolve;
+        this._reject = reject;
+
+        this._worker = cp.spawn(bin, [ path.resolve(__dirname, file) ], options);
+        this._miner = new SocketMessageHandle(data => {
+            let { nonce, error } = data;
+            if (nonce === undefined) {
+                return reject(error);
+            }
+
+            resolve(nonce);
+        });
+
+        this.init();
+    }
+
+    init() {
+        this._worker.unref();
+        this._worker.stdin.unref();
+        this._worker.stdout.unref();
+        this._worker.stderr.unref();
+
+        this._worker.stdout.on('data', chunk => {
+            this._miner.read_all_from_socket(chunk);
+        });
+
+        let onError = this.destroy.bind(this);
+        this._worker.on('error', onError);
+        this._worker.stdin.on('error', onError);
+        this._worker.stdout.on('error', onError);
+    }
+
+    send(data) {
+        this._worker.stdin.write(encode_socket_data(data));
+    }
+
+    destroy(err = { message: 'interrupt' }) {
+        this._reject(err);
+        if (!this._worker.killed) {
+            this._worker.kill();
+        }
+    }
+}
+
+class Miner extends Set {
+    set() {
+        for (let child of this.values()) {
+            child.destroy();
+            this.delete(child);
+        }
+    }
+}
+
 // Signal to communicate to the mining thread that it should stop mining because
 // we've updated the chain with a new block.
-const mine_interrupt = {
-    set: function () {
-        if (this._reject) {
-            this._reject();
-        }
-        this._reject = null;
-    },
-    clear: function (reject) {
-        this.set();
-        this._reject = reject;
-    }
-};
+const mine_interrupt = new Miner();
 
 const mine = async function mine(block) {
     let start = Date.time();
-    let nonce = 0;
-    let target = (new BN(0)).bincn(256 - block.bits);
 
-    let interval = 0xffffffff / 15000 | 0;
-    let min = 0;
-    let max = interval;
+    let nonce = await new Promise((resolve, reject) => {
+        let miner = new Child(resolve, reject);
+        mine_interrupt.add(miner);
 
-    while (max <= 0xffffffff) {
-        nonce = await new Promise((resolve, reject) => {
-            mine_interrupt.clear(reject);
+        miner.send({
+            'header': [
+                block.version,
+                block.prev_block_hash,
+                block.merkle_hash,
+                block.timestamp,
+                block.bits,
+                block.nonce
+            ],
+            'bits': block.bits
+        });
+    }).catch(err => {
+        logger.error('mine error %s', err.message)
+        return -1;
+    });
 
-            setImmediate((_min, _max) => {
-                let nonce = _min;
-                while (nonce <= _max) {
-                    let hex = sha256d(block.header(nonce));
-                    let sig = new BN(hex, 16);
-
-                    if (sig.lte(target)) {
-                        return resolve(nonce);
-                    }
-
-                    nonce++;
-                }
-
-                resolve(-1);
-            }, min, max);
-
-        }).catch(e => null);
-
-        if (nonce === null || nonce !== -1) {
-            break;
-        }
-
-        min += interval;
-        max += interval;
-    }
-
-    if (nonce === null) {
+    if (nonce === -1) {
         return None;
     }
 
