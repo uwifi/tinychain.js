@@ -515,7 +515,7 @@ function connect_block(block, doing_reorg = false) {
     try {
         [ block, chain_idx ] = validate_block(block);
     } catch (e) {
-        logger.warn('block %s failed validation %o', block.id, e);
+        logger.warn('block %s failed validation', block.id);
         if (e.to_orphan) {
             logger.info(`saw orphan block ${block.id}`);
             orphan_blocks.push(e.to_orphan);
@@ -612,10 +612,7 @@ function reorg_if_necessary() {
         let branch_height = len(chain) + fork_idx;
 
         if (branch_height > active_height) {
-            logger.info(`
-                attempting reorg of idx ${branch_idx} to active_chain:
-                new height of ${branch_height} (vs. ${active_height})
-            `);
+            logger.info(`attempting reorg of idx ${branch_idx} to active_chain - new height of ${branch_height} (vs. ${active_height})`);
             reorged |= try_reorg(chain, branch_idx + 1, fork_idx);
         }
     }
@@ -670,7 +667,7 @@ function try_reorg(branch, branch_idx, fork_idx) {
     side_branches.splice(branch_idx - 1, 1);
     side_branches.push(old_active);
 
-    logger.info('chain reorg! New height: %s, tip: %s', len(active_chain), active_chain[-1].id);
+    logger.info('chain reorg! New height: %s, tip: %s', len(active_chain), active_chain[len(active_chain) - 1].id);
 
     return true;
 }
@@ -1872,6 +1869,23 @@ exports.txn_iterator = txn_iterator;
 exports.build_spend_message = build_spend_message;
 exports.encode_socket_data = encode_socket_data;
 exports.SocketMessageHandle = SocketMessageHandle;
+exports.deserialize = deserialize;
+exports.serialize = serialize;
+
+exports.active_chain = active_chain;
+exports.ACTIVE_CHAIN_IDX = ACTIVE_CHAIN_IDX;
+exports.side_branches = side_branches;
+exports.mempool = mempool;
+exports.utxo_set = utxo_set;
+
+exports.pubkey_to_address = pubkey_to_address;
+exports.sha256d = sha256d;
+exports.bytes = bytes;
+exports.get_merkle_root = get_merkle_root;
+exports.get_median_time_past = get_median_time_past;
+exports.connect_block = connect_block;
+exports.add_to_utxo = add_to_utxo;
+exports.reorg_if_necessary = reorg_if_necessary;
 
 // Main
 // ----------------------------------------------------------------------------

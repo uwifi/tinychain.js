@@ -15,12 +15,13 @@
     "yargs": "^11.0.0"
   },
   "devDependencies": {
-    "chai": "4.1.2",
-    "mocha": "5.0.1"
+    "intelli-espower-loader": "^1.0.1",
+    "mocha": "5.0.1",
+    "power-assert": "^1.4.4"
   },
   "scripts": {
     "start": "node tinychain.js",
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "mocha"
   },
   "repository": {
     "type": "git",
