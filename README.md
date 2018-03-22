@@ -16,7 +16,7 @@ The original version of python, please refer to :https://github.com/jamesob/tiny
     ```
 - Once you see a few blocks go by, try sending some money between the wallets
     ```
-    $ TC_LOG_LABEL=client node client.js --send to_address --value 1337 from_address
+    $ TC_LOG_LABEL=client node client.js --wallet wallet1.dat --send to_address --value 1337
 
     2018-03-19T10:38:54.858Z [client] info: your address is 1Q2fBbg8XnnPiv1UHe44f2x9vf54YKXh7C
     2018-03-19T10:38:54.858Z [client] info built txn Transaction(...)
