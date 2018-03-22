@@ -161,6 +161,18 @@ if (argv.send) {
             let sum = 0;
             let selected = [];
 
+            let balance = utxos.reduce((s, u) => s + u.value, 0);
+
+            if (!value) {
+                logger.error('invalid value');
+                return;
+            }
+
+            if (balance < (value + fee)) {
+                logger.error('%s not sufficient balance', my_address);
+                return;
+            }
+
             for (let utxo of utxos) {
                 selected.push(utxo);
                 sum = selected.reduce((s, u) => s + u.value, 0);
