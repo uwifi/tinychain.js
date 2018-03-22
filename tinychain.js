@@ -987,7 +987,7 @@ const mine = async function mine(block) {
             'bits': block.bits
         });
     }).catch(err => {
-        logger.error('mine error %s', err.message)
+        logger.debug('mining %s', err.message);
         return -1;
     });
 
@@ -1211,8 +1211,6 @@ function find_utxo_in_mempool(txin) {
     let { txid, idx } = txin.to_spend;
     let txout;
 
-    console.log(txid, idx);
-
     try {
         txout = mempool.get(txid).txouts[idx];
     } catch (e) {
@@ -1417,7 +1415,7 @@ class GetBlocksMsg extends Map {
 
         // If we don't recognize the requested hash as part of the active
         // chain, start at the genesis block.
-        height = height || 1;
+        height = (height || 0) + 1;
 
         let blocks = active_chain.slice(height, height + this.CHUNK_SIZE);
 
@@ -1456,7 +1454,7 @@ class InvMsg extends Map {
             connect_block(block);
         }
 
-        let new_tip_id = active_chain[len(active_chain) - 1].id;
+        let new_tip_id = new_blocks[len(new_blocks) - 1].id;
         logger.info(`[p2p] continuing initial block download at ${new_tip_id}`);
 
         // "Recursive" call to continue the initial block sync.
@@ -1605,38 +1603,43 @@ const send_to_peer = async function send_to_peer(data, peer = None) {
     }
 
     let tries_left = 3;
+    let sleep_waiting = 3000;
+    let idle_timeout = 15000;
 
     while (tries_left > 0) {
-        let code = await new Promise((resolve, reject) => {
+        const res = await new Promise(resolve => {
+            const socket = net.createConnection(PORT, peer, () => {
+                socket.end(encode_socket_data(data));
+            });
 
             function retry() {
-                tries_left -= 1;
-                reject('limit maximum retries');
-            }
+                setTimeout(() => {
+                    tries_left -= 1;
+                    resolve('RETRY');
+                }, sleep_waiting);
+            };
 
-            let socket = new net.Socket;
-
-            socket.setTimeout(10000, () => {
+            // the socket has been idle.
+            socket.setTimeout(idle_timeout, () => {
                 socket.end();
-                retry();
             });
 
-            socket.connect(PORT, peer, () => {
-                socket.end(encode_socket_data(data));
-                resolve('end');
+            // the socket is full closed.
+            socket.on('close', had_error => {
+                if (had_error) {
+                    return retry();
+                }
+                resolve('OK');
             });
 
-            socket.on('error', (e) => {
-                logger.warn(`failed to send to peer ${peer}`);
-                retry();
+            // the `close` event will called directly
+            socket.on('error', err => {
+                logger.error('[p2p] error %s', err.message);
             });
-        }).catch(e => {
-            logger.error(e);
-            return 'end';
         });
 
-        if (code === 'end') {
-            return code;
+        if (res === 'OK') {
+            return;
         }
     }
 
@@ -1665,18 +1668,16 @@ function tcp_server(port, host = '0.0.0.0') {
             peer_hostnames.add(peer_hostname);
 
             if (data.handle && data.handle instanceof Function) {
-                logger.info(`received msg ${JSON.stringify(data)} from peer ${peer_hostname}`);
+                logger.info(`received msg %o from peer ${peer_hostname}`, data);
                 data.handle(socket, peer_hostname);
             }
             else if (data instanceof Transaction) {
                 logger.info(`received txn ${data.id} from peer ${peer_hostname}`);
                 add_txn_to_mempool(data);
-                socket.end();
             }
             else if (data instanceof Block) {
                 logger.info(`received block ${data.id} from peer ${peer_hostname}`);
                 connect_block(data);
-                socket.end();
             }
         });
 
@@ -1903,7 +1904,7 @@ const PORT = process.env['TC_PORT'] || 9999;
 
     if (len(peer_hostnames)) {
         logger.info('start initial block download from %d peers', len(peer_hostnames));
-        send_to_peer(new GetBlocksMsg(active_chain[len(active_chain) - 1].id));
+        send_to_peer(new GetBlocksMsg({ from_blockid: active_chain[len(active_chain) - 1].id }));
 
         // Wait a maximum of 60 seconds for IBD to complete.
         setTimeout(mine_forever, 60000);

@@ -88,12 +88,16 @@ function send_message(data) {
             message.read_all_from_socket(chunk);
         });
 
-        sock.on('end', () => {
-            resolve();
+        sock.setTimeout(2000, () => {
+            sock.end();
+        });
+
+        sock.on('close', had_error => {
+            resolve(had_error);
         });
 
         sock.on('error', (err) => {
-            reject(err);
+            logger.error('[p2p] error %s', err.message);
         });
     });
 }
@@ -136,7 +140,7 @@ if (argv.balance) {
                 return sum + utxo.value;
             }, 0);
 
-            logger.info('[Balance: %s] %d ⛼', my_address, value / tc.Params.BELUSHIS_PER_COIN);
+            logger.info('[Balance: %s] %d ⛼', argv._[0] || my_address, value / tc.Params.BELUSHIS_PER_COIN);
 
         } catch (err) {
             logger.error('[Get balance]: %o', err);
@@ -189,12 +193,13 @@ if (argv.send) {
                 txins.push(make_txin(utxo.outpoint, txouts));
             }
 
-            await send_message(new tc.Transaction({
+            let txn = new tc.Transaction({
                 txins: txins,
                 txouts: txouts
-            }));
+            });
+            await send_message(txn);
 
-            logger.info('[Send value] %d from %s to %s', value, my_addr, to_address);
+            logger.info('[Send value] %d: %s -> %s, txid: %s', value, my_addr, to_address, txn.id);
 
         } catch (err) {
             logger.error('[Send value]: %o', err);
